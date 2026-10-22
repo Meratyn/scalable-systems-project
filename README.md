@@ -8,7 +8,9 @@ CS-E4780 Course Project — Detecting Trading Trends in Financial Tick Data
 2. Create a venv and install dependencies:
 
 > python3.11 -m venv venv
+> 
 > source venv/bin/activate # on Windows: venv\Scripts\activate
+> 
 > pip install apache-flink
 
 3. Download the full dataset (7 CSV files, one per day) from:
