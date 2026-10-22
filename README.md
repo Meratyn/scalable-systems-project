@@ -28,9 +28,11 @@ development. To generate it:
    contain almost no real trades, only housekeeping events) into
    `data/raw_test/`:
 
-mkdir -p data/raw_test
-cp data/raw/debs2022-gc-trading-day-10-11-21.csv data/raw_test/
-cp data/raw/debs2022-gc-trading-day-11-11-21.csv data/raw_test/
+> mkdir -p data/raw_test
+> 
+> cp data/raw/debs2022-gc-trading-day-10-11-21.csv data/raw_test/
+> 
+> cp data/raw/debs2022-gc-trading-day-11-11-21.csv data/raw_test/
 
 2. Run `python job.py` — output is written to `output/results/` as CSV
    part-files (symbol, window end timestamp, EMA38, EMA100, advisory).
