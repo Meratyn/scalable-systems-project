@@ -7,9 +7,11 @@ CS-E4780 Course Project — Detecting Trading Trends in Financial Tick Data
 1. Install Python 3.11 and Java 11.
 2. Create a venv and install dependencies:
 
-python3.11 -m venv venv
-source venv/bin/activate # on Windows: venv\Scripts\activate
-pip install apache-flink
+> python3.11 -m venv venv
+> 
+> source venv/bin/activate # on Windows: venv\Scripts\activate
+> 
+> pip install apache-flink
 
 3. Download the full dataset (7 CSV files, one per day) from:
    https://doi.org/10.5281/zenodo.6382482
@@ -26,9 +28,11 @@ development. To generate it:
    contain almost no real trades, only housekeeping events) into
    `data/raw_test/`:
 
-mkdir -p data/raw_test
-cp data/raw/debs2022-gc-trading-day-10-11-21.csv data/raw_test/
-cp data/raw/debs2022-gc-trading-day-11-11-21.csv data/raw_test/
+> mkdir -p data/raw_test
+> 
+> cp data/raw/debs2022-gc-trading-day-10-11-21.csv data/raw_test/
+> 
+> cp data/raw/debs2022-gc-trading-day-11-11-21.csv data/raw_test/
 
 2. Run `python job.py` — output is written to `output/results/` as CSV
    part-files (symbol, window end timestamp, EMA38, EMA100, advisory).
