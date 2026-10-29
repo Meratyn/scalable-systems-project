@@ -11,7 +11,7 @@ for rep in 1 2 3; do
       tmp=output/bench_tmp
       rm -rf $tmp
       start=$(date +%s.%N)
-      java -Xmx5g -jar $JAR --input data/$dir --output $tmp --parallelism $p > /dev/null 2>&1
+      java -Xmx5g -XX:+UseParallelGC -jar $JAR --input data/$dir --output $tmp --parallelism $p > /dev/null 2>&1
       rc=$?
       end=$(date +%s.%N)
       secs=$(echo "$end - $start" | bc)

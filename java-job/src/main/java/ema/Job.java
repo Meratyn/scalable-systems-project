@@ -1,8 +1,6 @@
 package ema;
 
 import java.time.Duration;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 
 import org.apache.flink.api.common.eventtime.SerializableTimestampAssigner;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
@@ -29,6 +27,7 @@ import org.apache.flink.streaming.api.functions.sink.filesystem.OutputFileConfig
 import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+import org.apache.flink.streaming.api.functions.sink.DiscardingSink;
 import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
 import org.apache.flink.util.Collector;
 import org.apache.flink.util.OutputTag;
@@ -47,64 +46,9 @@ public class Job {
 
     // ---------- Step A: parse a raw CSV line into a clean price event ----------
 
-    /** Event = (symbol, exchange, last_price, ts_millis). Null when the line is not a price event. */
+    /** Event = (symbol, exchange, last_price, ts_millis). Null when the line is not a price event. See Parser. */
     public static Tuple4<String, String, Double, Long> parse(String line) {
-        if (line.startsWith("#") || line.startsWith("ID,")) {
-            return null;
-        }
-        String[] parts = line.trim().split(",", -1);
-        if (parts.length < 27) {
-            return null;
-        }
-        String symbol = parts[0];
-        String last = parts[21];
-        String tradingTime = parts[23];
-        String tradingDate = parts[26];
-        if (last.isEmpty() || tradingTime.isEmpty() || tradingDate.isEmpty()) {
-            return null;
-        }
-        try {
-            double price = Double.parseDouble(last);
-            if (price == 0.0) {
-                return null;
-            }
-            long ts = parseMillis(tradingDate, tradingTime);
-            int dot = symbol.lastIndexOf('.');
-            String exchange = dot >= 0 ? symbol.substring(dot + 1) : symbol;
-            return Tuple4.of(symbol, exchange, price, ts);
-        } catch (RuntimeException e) {
-            return null;
-        }
-    }
-
-    /**
-     * DD-MM-YYYY + HH:MM:SS[.ffff] -> epoch millis. The CEST wall-clock time is
-     * used as-is (treated as UTC, no timezone shift), so 5-minute windows line
-     * up with local midnight as the spec requires.
-     */
-    static long parseMillis(String date, String time) {
-        String[] d = date.split("-");
-        int day = Integer.parseInt(d[0]);
-        int month = Integer.parseInt(d[1]);
-        int year = Integer.parseInt(d[2]);
-        String hms = time;
-        String frac = "";
-        int dot = time.indexOf('.');
-        if (dot >= 0) {
-            hms = time.substring(0, dot);
-            frac = time.substring(dot + 1);
-        }
-        String[] t = hms.split(":");
-        int hh = Integer.parseInt(t[0]);
-        int mm = Integer.parseInt(t[1]);
-        int ss = Integer.parseInt(t[2]);
-        long millis = 0;
-        if (!frac.isEmpty()) {
-            String f = (frac + "000").substring(0, 3);
-            millis = Long.parseLong(f);
-        }
-        LocalDateTime dt = LocalDateTime.of(year, month, day, hh, mm, ss);
-        return dt.toEpochSecond(ZoneOffset.UTC) * 1000L + millis;
+        return Parser.parse(line);
     }
 
     public static class ParseFn implements FlatMapFunction<String, Tuple4<String, String, Double, Long>> {
@@ -217,6 +161,8 @@ public class Job {
         double toleranceHours = 200.0;
         boolean strict = false;
         boolean lateOutput = false;
+        String stage = "full";
+        boolean objectReuse = false;
         for (int i = 0; i < argv.length; i++) {
             switch (argv[i]) {
                 case "--input": input = argv[++i]; break;
@@ -225,26 +171,50 @@ public class Job {
                 case "--tolerance-hours": toleranceHours = Double.parseDouble(argv[++i]); break;
                 case "--strict-crossover": strict = true; break;
                 case "--late-output": lateOutput = true; break;
+                case "--stage": stage = argv[++i]; break;
+                case "--object-reuse": objectReuse = true; break;
                 default:
                     System.err.println("Unknown option: " + argv[i]);
                     System.err.println("Options: --input --output --parallelism --tolerance-hours "
-                            + "--strict-crossover --late-output");
+                            + "--strict-crossover --late-output --stage --object-reuse");
                     System.exit(2);
             }
         }
         System.out.println("input=" + input + " output=" + output + " parallelism=" + parallelism
-                + " tolerance_h=" + toleranceHours + " strict=" + strict);
+                + " tolerance_h=" + toleranceHours + " strict=" + strict + " stage=" + stage
+                + " objectReuse=" + objectReuse);
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(parallelism);
+        if (objectReuse) {
+            // Skip the defensive record copies between chained operators. Safe here:
+            // no function mutates its input records or the records it emits.
+            env.getConfig().enableObjectReuse();
+        }
 
         FileSource<String> source = FileSource
                 .forRecordStreamFormat(new TextLineInputFormat(), new Path(input)).build();
         DataStream<String> rawLines = env.fromSource(source, WatermarkStrategy.noWatermarks(), "csv-source");
 
+        // Diagnostic stages for timing experiments (results are discarded):
+        //   read  = read the files only
+        //   parse = read + parse
+        //   full  = the real job (default)
+        if (stage.equals("read")) {
+            rawLines.addSink(new DiscardingSink<String>());
+            env.execute("stage-read");
+            return;
+        }
+
         SingleOutputStreamOperator<Tuple4<String, String, Double, Long>> events =
                 rawLines.flatMap(new ParseFn())
                         .returns(Types.TUPLE(Types.STRING, Types.STRING, Types.DOUBLE, Types.LONG));
+
+        if (stage.equals("parse")) {
+            events.addSink(new DiscardingSink<Tuple4<String, String, Double, Long>>());
+            env.execute("stage-parse");
+            return;
+        }
 
         // Tolerance larger than the dataset (default 200h): no event is ever late,
         // so results do not depend on file read order or parallelism.

@@ -1,0 +1,28 @@
+11:24 read p=1 rep=1 60.217951096s
+11:25 read p=2 rep=1 38.951015315s
+11:25 read p=4 rep=1 25.342887998s
+11:26 read p=8 rep=1 19.978595489s
+11:29 parse p=1 rep=1 172.964680917s
+11:30 parse p=2 rep=1 111.092523645s
+11:32 parse p=4 rep=1 97.870334896s
+11:34 parse p=8 rep=1 114.453905190s
+11:35 read p=1 rep=2 61.257817212s
+11:36 read p=2 rep=2 41.396708464s
+11:36 read p=4 rep=2 29.013760244s
+11:37 read p=8 rep=2 32.529822538s
+11:40 parse p=1 rep=2 182.181928382s
+11:42 parse p=2 rep=2 143.018228835s
+11:44 parse p=4 rep=2 122.142166541s
+11:46 parse p=8 rep=2 95.126858390s
+
+read: parallelism, median(s), speedup
+  1     60.7  1.00x
+  2     40.2  1.51x
+  4     27.2  2.23x
+  8     26.3  2.31x
+
+parse: parallelism, median(s), speedup
+  1    177.6  1.00x
+  2    127.1  1.40x
+  4    110.0  1.61x
+  8    104.8  1.69x
