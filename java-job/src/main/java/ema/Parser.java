@@ -15,8 +15,15 @@ import org.apache.flink.api.java.tuple.Tuple4;
 public final class Parser {
     private Parser() { }
 
-    /** Event = (symbol, exchange, last_price, ts_millis). Null when the line is not a price event. */
-    public static Tuple4<String, String, Double, Long> parse(String line) {
+    /**
+     * Event = (symbol, exchange, last_price, ts_millis). Null when the line is not a price event.
+     *
+     * A price event has a non-zero Last and a Trading time. Its date is the Trading date; index
+     * rows and Frankfurt (ETR) rows have no Trading date, so when fallbackToSystemDate is true
+     * the system Date (column 3) is used instead. With false, a row without Trading date is
+     * dropped (the behaviour of the first version of the job).
+     */
+    public static Tuple4<String, String, Double, Long> parse(String line, boolean fallbackToSystemDate) {
         if (line.startsWith("#") || line.startsWith("ID,")) {
             return null;
         }
@@ -25,6 +32,7 @@ public final class Parser {
         int field = 0;
         int start = 0;
         String symbol = null;
+        String systemDate = null;
         String last = null;
         String tradingTime = null;
         String tradingDate = null;
@@ -33,6 +41,7 @@ public final class Parser {
             if (i == n || line.charAt(i) == ',') {
                 switch (field) {
                     case 0: symbol = line.substring(start, i); break;
+                    case 2: systemDate = line.substring(start, i); break;
                     case 21: last = line.substring(start, i); break;
                     case 23: tradingTime = line.substring(start, i); break;
                     case 26: tradingDate = line.substring(start, i); break;
@@ -49,7 +58,8 @@ public final class Parser {
         if (!complete) {
             return null; // fewer than 27 fields
         }
-        if (last.isEmpty() || tradingTime.isEmpty() || tradingDate.isEmpty()) {
+        String date = (tradingDate.isEmpty() && fallbackToSystemDate) ? systemDate : tradingDate;
+        if (last.isEmpty() || tradingTime.isEmpty() || date.isEmpty()) {
             return null;
         }
         try {
@@ -57,7 +67,7 @@ public final class Parser {
             if (price == 0.0) {
                 return null;
             }
-            long ts = parseMillis(tradingDate, tradingTime);
+            long ts = parseMillis(date, tradingTime);
             int dot = symbol.lastIndexOf('.');
             String exchange = dot >= 0 ? symbol.substring(dot + 1) : symbol;
             return Tuple4.of(symbol, exchange, price, ts);
@@ -143,8 +153,8 @@ public final class Parser {
         return dt.toEpochSecond(ZoneOffset.UTC) * 1000L + millis;
     }
 
-    /** The original parse(), unchanged, for comparison. */
-    public static Tuple4<String, String, Double, Long> parseReference(String line) {
+    /** The straightforward split-based version of parse(), for comparison. */
+    public static Tuple4<String, String, Double, Long> parseReference(String line, boolean fallbackToSystemDate) {
         if (line.startsWith("#") || line.startsWith("ID,")) {
             return null;
         }
@@ -156,7 +166,8 @@ public final class Parser {
         String last = parts[21];
         String tradingTime = parts[23];
         String tradingDate = parts[26];
-        if (last.isEmpty() || tradingTime.isEmpty() || tradingDate.isEmpty()) {
+        String date = (tradingDate.isEmpty() && fallbackToSystemDate) ? parts[2] : tradingDate;
+        if (last.isEmpty() || tradingTime.isEmpty() || date.isEmpty()) {
             return null;
         }
         try {
@@ -164,7 +175,7 @@ public final class Parser {
             if (price == 0.0) {
                 return null;
             }
-            long ts = parseMillisReference(tradingDate, tradingTime);
+            long ts = parseMillisReference(date, tradingTime);
             int dot = symbol.lastIndexOf('.');
             String exchange = dot >= 0 ? symbol.substring(dot + 1) : symbol;
             return Tuple4.of(symbol, exchange, price, ts);

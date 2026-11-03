@@ -1,0 +1,35 @@
+symbols with price events: 950, total price events: 4912043
+
+Top 10 symbols:
+  ASML.NL              153818   3.13%
+  TTE.FR               127182   2.59%
+  MC.FR                120150   2.45%
+  PRX.NL               119095   2.42%
+  MT.NL                116909   2.38%
+  RDSA.NL              116860   2.38%
+  INGA.NL               97763   1.99%
+  BNP.FR                87771   1.79%
+  KER.FR                87418   1.78%
+  AIR.FR                85908   1.75%
+
+Share of all price events held by the busiest k symbols:
+  top 1    symbols:   3.13%
+  top 10   symbols:  22.66%
+  top 50   symbols:  64.13%
+  top 100  symbols:  83.62%
+  top 500  symbols:  99.67%
+  symbols needed to cover 50% of events: 32 (3.37% of symbols)
+
+Per exchange: symbols, price events, share
+  FR      789 symbols       3188014 events   64.9%
+  NL      161 symbols       1724029 events   35.1%
+
+Key skew of the keyed window stage (Flink key-group assignment):
+  p=2  busiest worker 61.6% (ideal 50.0%)  best possible speedup 1.62x
+      loads: 38.4% 61.6% 
+  p=4  busiest worker 33.6% (ideal 25.0%)  best possible speedup 2.98x
+      loads: 24.0% 14.3% 28.0% 33.6% 
+  p=8  busiest worker 19.8% (ideal 12.5%)  best possible speedup 5.06x
+      loads: 12.2% 11.9% 7.6% 6.7% 19.4% 8.7% 13.8% 19.8% 
+  p=12 busiest worker 14.4% (ideal 8.3%)  best possible speedup 6.95x
+      loads: 8.6% 9.0% 6.4% 3.4% 8.6% 2.3% 10.3% 11.6% 6.1% 8.9% 14.4% 10.3% 

@@ -2,6 +2,7 @@ package ema;
 
 import java.time.Duration;
 
+import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.api.common.eventtime.SerializableTimestampAssigner;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.functions.FlatMapFunction;
@@ -12,6 +13,7 @@ import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.tuple.Tuple4;
 import org.apache.flink.api.java.tuple.Tuple5;
 import org.apache.flink.configuration.Configuration;
@@ -47,14 +49,20 @@ public class Job {
     // ---------- Step A: parse a raw CSV line into a clean price event ----------
 
     /** Event = (symbol, exchange, last_price, ts_millis). Null when the line is not a price event. See Parser. */
-    public static Tuple4<String, String, Double, Long> parse(String line) {
-        return Parser.parse(line);
+    public static Tuple4<String, String, Double, Long> parse(String line, boolean fallbackToSystemDate) {
+        return Parser.parse(line, fallbackToSystemDate);
     }
 
     public static class ParseFn implements FlatMapFunction<String, Tuple4<String, String, Double, Long>> {
+        private final boolean fallbackToSystemDate;
+
+        public ParseFn(boolean fallbackToSystemDate) {
+            this.fallbackToSystemDate = fallbackToSystemDate;
+        }
+
         @Override
         public void flatMap(String line, Collector<Tuple4<String, String, Double, Long>> out) {
-            Tuple4<String, String, Double, Long> e = parse(line);
+            Tuple4<String, String, Double, Long> e = parse(line, fallbackToSystemDate);
             if (e != null) {
                 out.collect(e);
             }
@@ -163,6 +171,7 @@ public class Job {
         boolean lateOutput = false;
         String stage = "full";
         boolean objectReuse = false;
+        boolean requireTradingDate = false;
         for (int i = 0; i < argv.length; i++) {
             switch (argv[i]) {
                 case "--input": input = argv[++i]; break;
@@ -173,19 +182,25 @@ public class Job {
                 case "--late-output": lateOutput = true; break;
                 case "--stage": stage = argv[++i]; break;
                 case "--object-reuse": objectReuse = true; break;
+                case "--require-trading-date": requireTradingDate = true; break;
                 default:
                     System.err.println("Unknown option: " + argv[i]);
                     System.err.println("Options: --input --output --parallelism --tolerance-hours "
-                            + "--strict-crossover --late-output --stage --object-reuse");
+                            + "--strict-crossover --late-output --stage --object-reuse --require-trading-date");
                     System.exit(2);
             }
         }
         System.out.println("input=" + input + " output=" + output + " parallelism=" + parallelism
                 + " tolerance_h=" + toleranceHours + " strict=" + strict + " stage=" + stage
-                + " objectReuse=" + objectReuse);
+                + " objectReuse=" + objectReuse
+                + " requireTradingDate=" + requireTradingDate);
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(parallelism);
+        if (stage.equals("symbolstats")) {
+            // bounded input: emit one final count per symbol, not running totals
+            env.setRuntimeMode(RuntimeExecutionMode.BATCH);
+        }
         if (objectReuse) {
             // Skip the defensive record copies between chained operators. Safe here:
             // no function mutates its input records or the records it emits.
@@ -196,9 +211,10 @@ public class Job {
                 .forRecordStreamFormat(new TextLineInputFormat(), new Path(input)).build();
         DataStream<String> rawLines = env.fromSource(source, WatermarkStrategy.noWatermarks(), "csv-source");
 
-        // Diagnostic stages for timing experiments (results are discarded):
-        //   read  = read the files only
-        //   parse = read + parse
+        // Diagnostic stages for experiments:
+        //   read  = read the files only (results discarded)
+        //   parse = read + parse (results discarded)
+        //   symbolstats = price events per symbol, written to <output>/symbolstats
         //   full  = the real job (default)
         if (stage.equals("read")) {
             rawLines.addSink(new DiscardingSink<String>());
@@ -207,8 +223,36 @@ public class Job {
         }
 
         SingleOutputStreamOperator<Tuple4<String, String, Double, Long>> events =
-                rawLines.flatMap(new ParseFn())
+                rawLines.flatMap(new ParseFn(!requireTradingDate))
                         .returns(Types.TUPLE(Types.STRING, Types.STRING, Types.DOUBLE, Types.LONG));
+
+        if (stage.equals("symbolstats")) {
+            // Price events per symbol -> <output>/symbolstats (symbol,count). Used for
+            // long-tail and key-skew analysis (see SkewReport).
+            events.map(new MapFunction<Tuple4<String, String, Double, Long>, Tuple2<String, Long>>() {
+                        @Override
+                        public Tuple2<String, Long> map(Tuple4<String, String, Double, Long> e) {
+                            return Tuple2.of(e.f0, 1L);
+                        }
+                    })
+                    .returns(Types.TUPLE(Types.STRING, Types.LONG))
+                    .keyBy(new KeySelector<Tuple2<String, Long>, String>() {
+                        @Override
+                        public String getKey(Tuple2<String, Long> t) {
+                            return t.f0;
+                        }
+                    })
+                    .sum(1)
+                    .map(new MapFunction<Tuple2<String, Long>, String>() {
+                        @Override
+                        public String map(Tuple2<String, Long> t) {
+                            return t.f0 + "," + t.f1;
+                        }
+                    })
+                    .sinkTo(csvSink(output + "/symbolstats"));
+            env.execute("stage-symbolstats");
+            return;
+        }
 
         if (stage.equals("parse")) {
             events.addSink(new DiscardingSink<Tuple4<String, String, Double, Long>>());

@@ -1,0 +1,36 @@
+symbols with price events: 4970, total price events: 59391670
+
+Top 10 symbols:
+  A169S8.ETR           162379   0.27%
+  A0X7J3.ETR           161830   0.27%
+  A2FG24.ETR           160505   0.27%
+  A2FG2S.ETR           160504   0.27%
+  A2FG2R.ETR           160504   0.27%
+  A2FG2Q.ETR           160504   0.27%
+  A0Z3NF.ETR           160401   0.27%
+  720328.ETR           160400   0.27%
+  720327.ETR           160400   0.27%
+  846741.ETR           160384   0.27%
+
+Share of all price events held by the busiest k symbols:
+  top 1    symbols:   0.27%
+  top 10   symbols:   2.71%
+  top 50   symbols:  13.48%
+  top 100  symbols:  26.90%
+  top 500  symbols:  54.76%
+  symbols needed to cover 50% of events: 306 (6.16% of symbols)
+
+Per exchange: symbols, price events, share
+  ETR    2126 symbols      31996003 events   53.9%
+  FR     2285 symbols      21367417 events   36.0%
+  NL      559 symbols       6028250 events   10.1%
+
+Key skew of the keyed window stage (Flink key-group assignment):
+  p=2  busiest worker 50.8% (ideal 50.0%)  best possible speedup 1.97x
+      loads: 49.2% 50.8% 
+  p=4  busiest worker 27.5% (ideal 25.0%)  best possible speedup 3.64x
+      loads: 23.9% 25.3% 27.5% 23.3% 
+  p=8  busiest worker 14.3% (ideal 12.5%)  best possible speedup 6.97x
+      loads: 12.5% 11.4% 12.8% 12.5% 14.3% 13.1% 12.6% 10.8% 
+  p=12 busiest worker 10.0% (ideal 8.3%)  best possible speedup 10.03x
+      loads: 8.4% 8.6% 6.9% 9.4% 8.0% 7.9% 9.3% 10.0% 8.2% 8.0% 8.7% 6.6% 
