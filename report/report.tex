@@ -1,0 +1,387 @@
+% CS-E4780 course project report. Compile on Overleaf (ACM template) or with
+%   latexmk -pdf report.tex
+% TODO markers: search for "TODO".
+\documentclass[sigconf,nonacm]{acmart}
+\usepackage{booktabs}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.17}
+\usetikzlibrary{positioning,arrows.meta}
+
+% Chart colours: categorical slots 1-3 of the default palette, fixed order.
+\definecolor{s1}{HTML}{2A78D6} % blue   - 7 days
+\definecolor{s2}{HTML}{EB6834} % orange - 4 days
+\definecolor{s3}{HTML}{1BAF7A} % aqua
+\definecolor{muted}{HTML}{8A8A85}
+\pgfplotsset{
+  every axis/.append style={
+    width=\columnwidth, height=0.62\columnwidth,
+    axis line style={muted}, tick style={muted},
+    grid style={muted!25}, ymajorgrids,
+    label style={font=\small}, tick label style={font=\footnotesize},
+    legend style={font=\footnotesize, draw=none, fill=none},
+    legend cell align=left,
+  },
+}
+
+\begin{document}
+
+\title{Detecting Trading Trends in Financial Tick Data with Apache Flink}
+\subtitle{CS-E4780 Scalable Systems and Data Management, course project}
+
+% TODO: full names, student numbers and e-mail addresses of all group members.
+\author{Kabita TODO-surname}
+\affiliation{\institution{Aalto University}\city{Espoo}\country{Finland}}
+\author{TODO second member}
+\affiliation{\institution{Aalto University}\city{Espoo}\country{Finland}}
+
+\begin{abstract}
+We implement the two continuous queries of the DEBS 2022 Grand Challenge on
+Apache Flink 1.20: for every symbol, EMA38 and EMA100 over 5-minute tumbling
+event-time windows (Q1), and buy/sell advisories when the two averages cross
+(Q2). On the full week of data (24\,GB, 289M CSV lines, 59.4M price events,
+4,970 symbols) the Java job produces 1,857,457 window results and 24,836
+crossovers in 57\,s with 8 workers on a laptop, and the output is identical at
+every parallelism level. The speedup levels off at about 1.9$\times$. Key skew
+would allow about 7$\times$; the actual limit is the input: Flink's file source
+reads each day-file with one reader, and the largest file alone takes about
+30\,s.
+\end{abstract}
+
+\maketitle
+
+\section{Introduction}
+Trading-trend detection is a classic stream-processing workload: a high-rate
+stream of price updates, keyed by instrument, aggregated over event-time
+windows, with state carried from one window to the next. The DEBS 2022 Grand
+Challenge~\cite{debs2022} defines two queries on one week of tick data from
+Infront Financial Technology~\cite{dataset}, covering the Paris (FR), Amsterdam (NL) and
+Frankfurt/Xetra (ETR) exchanges.
+
+\begin{description}
+\item[Q1] For each symbol and each 5-minute tumbling window, compute
+  $\mathit{EMA}_j = P\cdot\frac{2}{1+j} + \mathit{EMA}_{j,\mathit{prev}}\cdot\left(1-\frac{2}{1+j}\right)$
+  for $j\in\{38,100\}$, where $P$ is the last price in the window.
+\item[Q2] Emit a \emph{buy} advisory when EMA38 moves above EMA100 (a bullish
+  breakout) and a \emph{sell} advisory when it moves below (a bearish breakdown).
+\end{description}
+
+We built the job in Java on Apache Flink~\cite{flink}. An earlier PyFlink
+prototype of the same logic needed about 85 minutes for four days of data;
+the Java port is more than 30$\times$ faster. Its single-worker run is the
+baseline for all measurements below. Our contributions are (i) a deterministic
+event-time pipeline whose output does not depend on parallelism, (ii) a careful
+treatment of which rows count as price events, and (iii) a scalability study
+that separates the effects of input reading, parsing, key skew and JVM
+settings.
+
+\section{Data and Event Definition}\label{sec:data}
+The dataset consists of seven daily CSV files (8--14 November 2021). The five
+weekday files are 4.7--5.5\,GB each; the two weekend files are almost empty.
+Each row has 39 columns. We use four: the symbol (\texttt{ID}), \texttt{Last}
+(last traded price), \texttt{Trading time}, and \texttt{Trading date}.
+
+\paragraph{Price events.} A row is a price event if it has a non-zero
+\texttt{Last} price and a \texttt{Trading time}. Its event time is
+\texttt{Trading date} + \texttt{Trading time} (UTC). For index rows and all
+Frankfurt (ETR) rows, \texttt{Trading date} is empty. In that case we use the
+row's system date (column 3), which is the trading day of the file. An early
+version of our parser dropped these rows and silently lost 53.9\,\% of all
+price events, including every ETR symbol. Table~\ref{tab:data} summarises the
+corrected input.
+
+\begin{table}[t]
+\caption{Input data (full week).}\label{tab:data}
+\begin{tabular}{lrrr}
+\toprule
+Exchange & Symbols & Price events & Share \\
+\midrule
+ETR (Frankfurt) & 2,126 & 32.0M & 53.9\,\% \\
+FR (Paris)      & 2,285 & 21.4M & 36.0\,\% \\
+NL (Amsterdam)  &   559 &  6.0M & 10.1\,\% \\
+\midrule
+Total & 4,970 & 59.4M & \\
+\multicolumn{4}{l}{\footnotesize CSV lines read: 289.1M (24\,GB); 20.5\,\% are price events.}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Assumptions.} These are our interpretations; the open questions are
+listed in Section~\ref{sec:discussion}.
+\begin{itemize}
+\item The window's price $P$ is the price event with the latest trading
+  timestamp in the window. Ties are broken by arrival order.
+\item The EMAs of a symbol are seeded with its first price, so the first
+  window has no advisory.
+\item A window in which a symbol has no price event produces no output and
+  does not update the EMAs.
+\end{itemize}
+
+\section{System Design}
+Figure~\ref{fig:pipeline} shows the dataflow.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  node distance=3.5mm,
+  op/.style={draw=s1, thick, rounded corners=2pt, align=center,
+             font=\footnotesize, minimum height=9mm, inner sep=2pt, text width=12mm},
+  arr/.style={-{Stealth[length=2mm]}, muted, thick},
+]
+\node[op] (src) {File\\source};
+\node[op, right=of src] (prs) {Parse +\\filter};
+\node[op, right=of prs] (win) {5-min\\window\\(latest)};
+\node[op, right=of win] (ema) {EMA +\\crossover};
+\node[op, right=of ema] (snk) {CSV\\sink};
+\draw[arr] (src) -- (prs);
+\draw[arr] (prs) -- node[above, font=\scriptsize, text=black, yshift=4mm]{keyBy} (win);
+\draw[arr] (win) -- (ema);
+\draw[arr] (ema) -- (snk);
+\node[below=1mm of ema, font=\scriptsize, align=center] {keyed state:\\EMA38, EMA100};
+\node[below=1mm of src, font=\scriptsize, align=center] {1 reader\\per file};
+\end{tikzpicture}
+\caption{Dataflow of the job. The parse step is chained to the source.
+Everything after \texttt{keyBy(symbol)} runs per key.}\label{fig:pipeline}
+\end{figure}
+
+\paragraph{Source and parsing.} Flink's \texttt{FileSource} reads the CSV
+files line by line. A chained flat-map parses each line into
+(symbol, exchange, price, timestamp) and drops non-price rows. Since only
+20\,\% of lines are price events, filtering before the shuffle removes most
+of the network traffic.
+
+\paragraph{Windowing (Q1).} Events are keyed by symbol and assigned to
+5-minute tumbling event-time windows. We use an incremental \texttt{reduce}
+that keeps only the event with the latest timestamp, so each open window holds
+one event per symbol. A \texttt{ProcessWindowFunction} runs once per
+(symbol, window) when the window fires.
+
+\paragraph{EMA state and crossover (Q2).} The window function keeps EMA38 and
+EMA100 in keyed \texttt{ValueState}, so the averages carry over from one window
+to the next and are partitioned together with the key. Windows of one key fire
+in event-time order, so the state is updated in the correct order. A buy
+advisory is emitted when $\mathit{EMA}_{38} > \mathit{EMA}_{100}$ now and
+$\mathit{EMA}_{38,\mathit{prev}} \le \mathit{EMA}_{100,\mathit{prev}}$; sell is
+symmetric. This literal reading of the specification also fires when the
+previous EMAs were \emph{equal}, which happens in a symbol's second window,
+right after seeding. A \texttt{--strict-crossover} option requires a strict
+previous inequality instead. Of the 24,836 literal crossovers, 4,847
+(19.5\,\%) come from such equal starts; the strict rule yields 19,989.
+
+\paragraph{Watermarks and determinism.} Event times inside a file are not in
+order: old trades are re-reported, and the files are read concurrently. We use
+a bounded-out-of-orderness watermark with a tolerance of 200\,h, which is
+longer than the dataset, so no event is ever late and all windows fire at the
+end of input. Together with the deterministic latest-event rule, this makes the
+output independent of parallelism and of read order, which we verify for every
+configuration (Section~\ref{sec:correct}). A smaller tolerance makes the job
+emit results sooner; a \texttt{--late-output} option then writes late events to
+a side output instead of dropping them silently.
+
+\section{Implementation and Optimisations}
+The job is about 520 lines of Java (\texttt{Job.java}, \texttt{Parser.java})
+and runs as a fat jar in Flink's local mini-cluster. Two changes gave most of
+the single-worker speed:
+\begin{itemize}
+\item \emph{Parser.} The first parser split every line into all 39 fields and
+  parsed timestamps through \texttt{java.time}. The new parser scans for the
+  four needed columns only and parses timestamps by hand. It matched the old
+  parser on 3M fuzzed lines and on the full outputs.
+\item \emph{Garbage collector.} The job allocates many short-lived strings, and
+  the throughput-oriented Parallel GC was about 25\,\% faster than the default G1.
+\end{itemize}
+Section~\ref{sec:ablation} quantifies both effects on the final code.
+
+\section{Evaluation}\label{sec:eval}
+
+\paragraph{Setup.} All runs use one laptop with an Intel Core i5-12450H
+(4 performance cores with 2 threads each, plus 4 efficiency cores: 12 hardware
+threads), Windows 11 with WSL2 (Ubuntu, 7.6\,GB memory available to Linux), the
+data on the local SSD, OpenJDK 11.0.32, Flink 1.20.1, and
+\texttt{-Xmx5g -XX:+UseParallelGC}.
+Runtime is the wall-clock time of the whole process, including JVM and Flink
+start-up (a few seconds), measured with \texttt{/usr/bin/time}. Each value is
+the median of three runs; runs of different configurations are interleaved to
+spread background noise. Run-to-run variation is up to $\pm$15\,\% (ranges in
+Table~\ref{tab:speedup}).
+
+\subsection{Correctness}\label{sec:correct}
+The job computes 1,857,457 window results and 24,836 crossovers for the full
+week. Results are compared key by key with \texttt{compare\_runs.py}: outputs at
+parallelism 1, 2, 4 and 8, with both source implementations, with both parsers,
+and with the input split into 8 chunks per day are all identical. On a
+20-minute slice we checked the EMA values against an independent PyFlink
+implementation of the same formulas.
+
+\subsection{Scalability with parallelism}
+Table~\ref{tab:speedup} and Figure~\ref{fig:speedup} show runtime and speedup
+for 4 and 7 days. The speedup is sub-linear and levels off: 1.90$\times$ at 8
+workers for 7 days. On 4 days, 8 workers are no faster than 4. At 8 workers the
+job processes 5.0M CSV lines/s, or 1.04M price events/s.
+
+\begin{table}[t]
+\caption{Runtime (median of 3, min--max in brackets) and speedup.}\label{tab:speedup}
+\begin{tabular}{rrrrr}
+\toprule
+ & \multicolumn{2}{c}{4 days (19\,GB)} & \multicolumn{2}{c}{7 days (24\,GB)} \\
+Workers & Time (s) & Speedup & Time (s) & Speedup \\
+\midrule
+1 & 81.3 {\scriptsize(79--83)} & 1.00 & 108.8 {\scriptsize(98--111)} & 1.00 \\
+2 & 62.2 {\scriptsize(55--63)} & 1.31 &  77.4 {\scriptsize(70--88)} & 1.40 \\
+4 & 47.7 {\scriptsize(44--50)} & 1.71 &  66.0 {\scriptsize(62--86)} & 1.65 \\
+8 & 49.6 {\scriptsize(49--58)} & 1.64 &  57.3 {\scriptsize(55--73)} & 1.90 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  xmode=log, log basis x=2, xtick={1,2,4,8}, xticklabels={1,2,4,8},
+  xlabel={Workers (parallelism)}, ylabel={Speedup over 1 worker},
+  ymin=0, ymax=8.5, ytick={0,2,4,6,8},
+  legend pos=north west,
+]
+\addplot[muted, thin, dotted, domain=1:8, samples=2, forget plot] {x};
+\node[font=\scriptsize, text=muted, rotate=36] at (axis cs:5.0,5.6) {linear};
+\addplot[muted, thick, dashed, mark=triangle*, mark size=2.5pt,
+         mark options={solid, fill=white}]
+  coordinates {(1,1) (2,1.97) (4,3.64) (8,6.97)};
+\addlegendentry{key-skew bound}
+\addplot[s1, thick, mark=*, mark size=2.2pt, mark options={draw=white}]
+  coordinates {(1,1) (2,1.40) (4,1.65) (8,1.90)};
+\addlegendentry{7 days}
+\addplot[s2, thick, mark=square*, mark size=2.0pt, mark options={draw=white}]
+  coordinates {(1,1) (2,1.31) (4,1.71) (8,1.64)};
+\addlegendentry{4 days}
+\end{axis}
+\end{tikzpicture}
+\caption{Measured speedup against the best speedup that key skew alone would
+allow. The gap shows that skew is not the limit.}\label{fig:speedup}
+\end{figure}
+
+\subsection{Why the speedup levels off}
+We tested four explanations.
+
+\paragraph{Key skew --- not the limit.} The keyed window stage can only be as
+fast as its busiest worker. Using Flink's own key-group assignment (128 key
+groups) and the per-symbol event counts, the busiest worker receives 50.8\,\%,
+27.5\,\% and 14.3\,\% of all price events at 2, 4 and 8 workers. This would
+still allow speedups of 1.97$\times$, 3.64$\times$ and 6.97$\times$, far above
+what we measure (Figure~\ref{fig:speedup}). The load is not dominated by a few
+heavy symbols: the busiest symbol holds only 0.27\,\% of events, and 306
+symbols (6\,\%) are needed to cover half of all events.
+
+\paragraph{Window and EMA work --- negligible.} Runs that stop after reading
+(\texttt{--stage read}) or after parsing (\texttt{--stage parse}) show that
+reading and parsing account for nearly all of the runtime; the keyed stages add
+almost nothing. Reading alone took 61\,s with one worker and 26\,s with eight
+(2.3$\times$).
+
+\paragraph{CPU --- not saturated.} At 8 workers the process uses 7.6--7.8 cores
+on average (764--778\,\% CPU) out of 12 hardware threads. The machine is busy
+but not at its limit, and only 8 of the 12 hardware threads belong to performance
+cores; the other 4 run on slower efficiency cores.
+
+\paragraph{One reader per file --- the main limit.} \texttt{FileSource} with a
+text-line format does not split files: each file is read and parsed by exactly
+one worker. The week has only five large files, so at most five readers do real
+work, and the run cannot finish before the largest file (5.5\,GB) has been read
+by a single thread. Table~\ref{tab:volume} confirms this. With 8 workers, one
+day (exactly that largest file) takes 31\,s and uses only 2.2 cores; seven days
+take only 1.7$\times$ longer for 4.5$\times$ more data. Throughput grows with the
+number of files, not with the number of workers.
+
+\begin{table}[t]
+\caption{Volume scaling at 8 workers (median of 3).}\label{tab:volume}
+\begin{tabular}{lrrrrr}
+\toprule
+Input & Files & Lines & Time & Lines/s & CPU \\
+\midrule
+1 day  & 1 &  64.6M & 31.1\,s & 2.1M & 216\,\% \\
+2 days & 2 & 120.1M & 33.1\,s & 3.6M & 365\,\% \\
+4 days & 4 & 235.1M & 45.0\,s & 5.2M & 654\,\% \\
+7 days & 7$^\ast$ & 289.1M & 53.2\,s & 5.4M & 778\,\% \\
+\bottomrule
+\multicolumn{6}{l}{\footnotesize $^\ast$5 large weekday files and 2 near-empty weekend files.}\\
+\multicolumn{6}{l}{\footnotesize Peak memory (RSS) 2.2--2.8\,GB in all runs.}\\
+\end{tabular}
+\end{table}
+
+However, splitting the input did not remove the plateau
+(Table~\ref{tab:ablation}). With each day cut into 8 files (56 files), the
+process used almost 10 cores (986\,\% CPU) but finished in the same time as
+the baseline. The splittable legacy source, which divides files into byte
+ranges, was even 1.6$\times$ slower. Once the reading is spread out, the job
+appears to be limited by the shared hardware itself: parsing is mostly byte
+scanning and string allocation, and the readers compete with the shuffle, the
+garbage collector and WSL2's file-system layer for the same 4 performance cores
+and memory bandwidth. We did not measure this last step directly.
+
+\subsection{Ablation}\label{sec:ablation}
+Table~\ref{tab:ablation} changes one factor at a time from the final
+configuration on the full week at 8 workers. Every configuration produced
+output identical to the baseline. The ablation was run in a separate session from
+Table~\ref{tab:speedup}, so its baseline (50.8\,s) differs from the 57.3\,s
+there by about 10\,\%; we compare configurations only within one session.
+
+\begin{table}[t]
+\caption{Ablation, 7 days, 8 workers (median of 3 runs).}\label{tab:ablation}
+\begin{tabular}{lrrrr}
+\toprule
+Change from baseline & Time & Rel. & CPU & Memory \\
+\midrule
+None (baseline)$^\ast$       &  50.8\,s & 1.00 & 785\,\% & 2.7\,GB \\
+Original split-based parser  & 108.5\,s & 2.13 & 679\,\% & 2.8\,GB \\
+G1 GC (JVM default)          &  59.1\,s & 1.16 & 822\,\% & 4.7\,GB \\
+Legacy splittable source     &  81.1\,s & 1.60 & 588\,\% & 2.7\,GB \\
+Each day split into 8 files  &  49.8\,s & 0.98 & 986\,\% & 2.8\,GB \\
+Object reuse enabled         &  49.9\,s & 0.98 & 819\,\% & 2.7\,GB \\
+\bottomrule
+\multicolumn{5}{l}{\footnotesize Baseline: fast parser, Parallel GC, FileSource, one file per day.}\\
+\multicolumn{5}{l}{\footnotesize $^\ast$One baseline run stalled (584\,s at 73\,\% CPU) and was repeated.}\\
+\end{tabular}
+\end{table}
+
+The parser matters most: the original parser makes the whole job 2.1$\times$
+slower, which confirms that parsing dominates the runtime. Parallel GC is
+16\,\% faster than G1 and uses 1.7$\times$ less memory, because G1 grows the
+heap more eagerly. Object reuse and splitting the files have no measurable
+effect (2\,\% is within run-to-run noise). The legacy source is slower even
+though it splits files, and it keeps the CPU less busy. We did not
+investigate why, because this API is deprecated and removed in Flink 2.0.
+
+\section{Discussion and Limitations}\label{sec:discussion}
+\paragraph{Throughput, not latency.} We replay a static dataset as fast as
+possible and report throughput. With a 200\,h watermark tolerance, results
+appear only when the input ends, so per-event latency is not meaningful in this
+setup. A live deployment would use a tolerance of seconds to minutes and accept
+a small number of late events. Our side output makes that trade-off measurable.
+% TODO: update after the professor's answer on latency expectations.
+
+\paragraph{Interpretation choices.} The literal versus strict crossover rule
+changes the result count by 19.5\,\%, and the handling of empty windows and of
+rows without a trading date changes which windows exist at all. We report the
+literal rule as the main result and provide the others as options.
+% TODO: update after the professor's answers.
+
+\paragraph{Single machine.} All measurements are from one laptop running
+Flink's mini-cluster, so the shuffle never crosses a network. On a cluster with
+one disk per node, the per-file reader would scale with the number of nodes,
+while the shuffle of 59.4M small records would add network cost.
+
+\section{Conclusion}
+A small Flink job computes both DEBS 2022 queries on a full week of tick data
+in under a minute on a laptop, with results identical at every parallelism
+level. Profiling showed that windowing and EMA state are cheap and key skew is
+mild. The cost lies in reading and parsing 24\,GB of text, and Flink's
+file-level source parallelism limits how far that step can be spread.
+
+\begin{acks}
+% TODO: individual contributions, if required by the course.
+\end{acks}
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{references}
+
+\end{document}
