@@ -172,6 +172,7 @@ public class Job {
         String stage = "full";
         boolean objectReuse = false;
         boolean requireTradingDate = false;
+        String sourceType = "file";
         for (int i = 0; i < argv.length; i++) {
             switch (argv[i]) {
                 case "--input": input = argv[++i]; break;
@@ -183,17 +184,19 @@ public class Job {
                 case "--stage": stage = argv[++i]; break;
                 case "--object-reuse": objectReuse = true; break;
                 case "--require-trading-date": requireTradingDate = true; break;
+                case "--source": sourceType = argv[++i]; break;
                 default:
                     System.err.println("Unknown option: " + argv[i]);
                     System.err.println("Options: --input --output --parallelism --tolerance-hours "
-                            + "--strict-crossover --late-output --stage --object-reuse --require-trading-date");
+                            + "--strict-crossover --late-output --stage --object-reuse --require-trading-date --source file|legacy");
                     System.exit(2);
             }
         }
         System.out.println("input=" + input + " output=" + output + " parallelism=" + parallelism
                 + " tolerance_h=" + toleranceHours + " strict=" + strict + " stage=" + stage
                 + " objectReuse=" + objectReuse
-                + " requireTradingDate=" + requireTradingDate);
+                + " requireTradingDate=" + requireTradingDate
+                + " source=" + sourceType);
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(parallelism);
@@ -207,9 +210,17 @@ public class Job {
             env.getConfig().enableObjectReuse();
         }
 
-        FileSource<String> source = FileSource
-                .forRecordStreamFormat(new TextLineInputFormat(), new Path(input)).build();
-        DataStream<String> rawLines = env.fromSource(source, WatermarkStrategy.noWatermarks(), "csv-source");
+        DataStream<String> rawLines;
+        if (sourceType.equals("legacy")) {
+            // Splittable source: big files are cut into byte ranges that different workers
+            // read in parallel. Deprecated in Flink 1.20 (removed in 2.0) but it works here.
+            rawLines = env.readTextFile(input);
+        } else {
+            // FileSource with TextLineInputFormat: simple, but one file is read by one worker.
+            FileSource<String> source = FileSource
+                    .forRecordStreamFormat(new TextLineInputFormat(), new Path(input)).build();
+            rawLines = env.fromSource(source, WatermarkStrategy.noWatermarks(), "csv-source");
+        }
 
         // Diagnostic stages for experiments:
         //   read  = read the files only (results discarded)
