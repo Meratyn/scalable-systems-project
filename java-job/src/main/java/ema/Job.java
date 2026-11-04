@@ -55,14 +55,23 @@ public class Job {
 
     public static class ParseFn implements FlatMapFunction<String, Tuple4<String, String, Double, Long>> {
         private final boolean fallbackToSystemDate;
+        private final boolean reference;
 
         public ParseFn(boolean fallbackToSystemDate) {
+            this(fallbackToSystemDate, false);
+        }
+
+        /** reference=true uses the original split-based parser (for the ablation). */
+        public ParseFn(boolean fallbackToSystemDate, boolean reference) {
             this.fallbackToSystemDate = fallbackToSystemDate;
+            this.reference = reference;
         }
 
         @Override
         public void flatMap(String line, Collector<Tuple4<String, String, Double, Long>> out) {
-            Tuple4<String, String, Double, Long> e = parse(line, fallbackToSystemDate);
+            Tuple4<String, String, Double, Long> e = reference
+                    ? Parser.parseReference(line, fallbackToSystemDate)
+                    : parse(line, fallbackToSystemDate);
             if (e != null) {
                 out.collect(e);
             }
@@ -173,6 +182,7 @@ public class Job {
         boolean objectReuse = false;
         boolean requireTradingDate = false;
         String sourceType = "file";
+        String parser = "fast";
         for (int i = 0; i < argv.length; i++) {
             switch (argv[i]) {
                 case "--input": input = argv[++i]; break;
@@ -185,10 +195,11 @@ public class Job {
                 case "--object-reuse": objectReuse = true; break;
                 case "--require-trading-date": requireTradingDate = true; break;
                 case "--source": sourceType = argv[++i]; break;
+                case "--parser": parser = argv[++i]; break;
                 default:
                     System.err.println("Unknown option: " + argv[i]);
                     System.err.println("Options: --input --output --parallelism --tolerance-hours "
-                            + "--strict-crossover --late-output --stage --object-reuse --require-trading-date --source file|legacy");
+                            + "--strict-crossover --late-output --stage --object-reuse --require-trading-date --source file|legacy --parser fast|reference");
                     System.exit(2);
             }
         }
@@ -196,7 +207,7 @@ public class Job {
                 + " tolerance_h=" + toleranceHours + " strict=" + strict + " stage=" + stage
                 + " objectReuse=" + objectReuse
                 + " requireTradingDate=" + requireTradingDate
-                + " source=" + sourceType);
+                + " source=" + sourceType + " parser=" + parser);
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(parallelism);
@@ -234,7 +245,7 @@ public class Job {
         }
 
         SingleOutputStreamOperator<Tuple4<String, String, Double, Long>> events =
-                rawLines.flatMap(new ParseFn(!requireTradingDate))
+                rawLines.flatMap(new ParseFn(!requireTradingDate, parser.equals("reference")))
                         .returns(Types.TUPLE(Types.STRING, Types.STRING, Types.DOUBLE, Types.LONG));
 
         if (stage.equals("symbolstats")) {

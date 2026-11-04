@@ -10,7 +10,7 @@ It is written in Java on Apache Flink 1.20.1 (`java-job/`).
 ## Requirements
 
 - Java 11 or newer, Maven 3
-- Python 3 (only for the helper scripts `compare_runs.py` and `bench_summary.py`)
+- Python 3 (only for helper scripts: `compare_runs.py`, `bench_summary.py`, `make_small_set.py`, `check_stale.py`)
 - About 6 GB RAM for the full week
 
 ## Data
@@ -24,6 +24,9 @@ Smaller subsets used during development (also gitignored):
 |---|---|
 | `data/raw1`, `data/raw2`, `data/raw4` | first 1, 2 and 4 day-files |
 | `data/small` | 20-minute slice of each day, for quick correctness checks |
+
+`data/small` was cut with `python3 make_small_set.py <in_dir> <out_dir> <start> <end>`.
+`check_stale.py <file.csv>` counts price events that would arrive late (old trades re-reported).
 
 ## Build
 
@@ -54,6 +57,7 @@ java -Xmx5g -XX:+UseParallelGC -jar java-job/target/ema-crossover-1.0.jar \
 | `--source file\|legacy` | `file` | `file` = FileSource (one reader per file); `legacy` = splittable `readTextFile` |
 | `--require-trading-date` | off | drop rows with an empty Trading date instead of using the system date |
 | `--object-reuse` | off | Flink object reuse (performance experiment) |
+| `--parser fast\|reference` | `fast` | `reference` = original split-based parser (ablation) |
 | `--stage <s>` | `full` | `read`, `parse`, `symbolstats` or `full` (see Experiments) |
 
 ### Output format
@@ -116,6 +120,7 @@ Results must be IDENTICAL across parallelism levels.
 |---|---|---|
 | `benchmark.sh` | runtime at parallelism 1/2/4/8, 4 and 7 days, 3 runs | `logs/bench_times.csv` (summarise with `python3 bench_summary.py logs/bench_times.csv`) |
 | `stage_bench.sh` | runtime of only reading / reading+parsing | `logs/stage_times.csv` |
+| `ablation.sh` | one-factor-at-a-time ablation: parser, GC, source, file splitting, object reuse (7 days, p=8) | `logs/ablation_times.csv`, `logs/ablation.log` |
 | `resource_bench.sh` | volume scaling (1–7 days) and CPU % / peak memory | `logs/resource_times.csv` |
 
 Key skew per worker (uses Flink's own key-group assignment):
