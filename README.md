@@ -1,51 +1,129 @@
 # scalable-systems-project
 
 CS-E4780 Course Project — Detecting Trading Trends in Financial Tick Data
+(DEBS 2022 Grand Challenge data).
 
-## Setup
+For every symbol, the job computes EMA38 and EMA100 over 5-minute tumbling
+event-time windows and emits a BUY or SELL advisory when the two EMAs cross.
+It is written in Java on Apache Flink 1.20.1 (`java-job/`).
 
-1. Install Python 3.11 and Java 11.
-2. Create a venv and install dependencies:
+## Requirements
 
-> python3.11 -m venv venv
-> 
-> source venv/bin/activate # on Windows: venv\Scripts\activate
-> 
-> pip install apache-flink
+- Java 11 or newer, Maven 3
+- Python 3 (only for the helper scripts `compare_runs.py` and `bench_summary.py`)
+- About 6 GB RAM for the full week
 
-3. Download the full dataset (7 CSV files, one per day) from:
-   https://doi.org/10.5281/zenodo.6382482
-4. Place all 7 CSVs in `data/raw/` (this folder is gitignored — you must
-   download the data yourself, it is not included in this repo).
+## Data
 
-## Generating a test sample
+Download the 7 daily CSV files from https://doi.org/10.5281/zenodo.6382482 and
+put them in `data/raw/`. The `data/` folder is gitignored.
 
-The full dataset is 3-5.5GB per weekday file, which is slow to iterate on.
-`job.py` currently reads from `data/raw_test/`, a smaller subset, for
-development. To generate it:
+Smaller subsets used during development (also gitignored):
 
-1. Copy one or two weekday CSVs (avoid weekends — Nov 13/14 — since those
-   contain almost no real trades, only housekeeping events) into
-   `data/raw_test/`:
+| Folder | Contents |
+|---|---|
+| `data/raw1`, `data/raw2`, `data/raw4` | first 1, 2 and 4 day-files |
+| `data/small` | 20-minute slice of each day, for quick correctness checks |
 
-> mkdir -p data/raw_test
-> 
-> cp data/raw/debs2022-gc-trading-day-10-11-21.csv data/raw_test/
-> 
-> cp data/raw/debs2022-gc-trading-day-11-11-21.csv data/raw_test/
+## Build
 
-2. Run `python job.py` — output is written to `output/results/` as CSV
-   part-files (symbol, window end timestamp, EMA38, EMA100, advisory).
+```
+cd java-job && mvn -q package -DskipTests
+```
 
-## Known issues
+This produces `java-job/target/ema-crossover-1.0.jar` (a fat jar that runs
+Flink in local mode, so no Flink cluster is needed).
 
-- **Windows**: running `job.py` with `parallelism > 1` crashes immediately
-  with `Process died with exit code 0` (a known PyFlink/Windows subprocess
-  spawning issue). Use WSL2 (Ubuntu) instead — confirmed working there at
-  parallelism=2 against real multi-GB data.
+## Run
 
-## Next steps
+```
+java -Xmx5g -XX:+UseParallelGC -jar java-job/target/ema-crossover-1.0.jar \
+     --input data/raw --output output/x --parallelism 8
+```
 
-- Scale up to the full 7-day dataset and higher parallelism
-- Performance/scalability measurements (throughput at parallelism 1/2/4/8)
+### Options
 
+| Option | Default | Meaning |
+|---|---|---|
+| `--input <dir>` | `data/raw_test/` | folder with the CSV files |
+| `--output <dir>` | `output` | results go to `<dir>/results/` |
+| `--parallelism <n>` | `1` | number of parallel workers |
+| `--strict-crossover` | off | require the previous EMAs to differ (see below) |
+| `--tolerance-hours <h>` | `200` | watermark out-of-orderness bound |
+| `--late-output` | off | write events that arrive after their window closed to `<dir>/late/` |
+| `--source file\|legacy` | `file` | `file` = FileSource (one reader per file); `legacy` = splittable `readTextFile` |
+| `--require-trading-date` | off | drop rows with an empty Trading date instead of using the system date |
+| `--object-reuse` | off | Flink object reuse (performance experiment) |
+| `--stage <s>` | `full` | `read`, `parse`, `symbolstats` or `full` (see Experiments) |
+
+### Output format
+
+One line per (symbol, window):
+
+```
+symbol,window_end_ms,ema38,ema100,advisory
+```
+
+`advisory` is `BUY`, `SELL` or empty. `window_end_ms` is the window end in
+epoch milliseconds (UTC).
+
+## How it works
+
+1. **Parse.** Each CSV row with a `Last` price and a `Trading time` is a price
+   event. The event time is `Trading date` + `Trading time`. If `Trading date`
+   is empty (index rows and Frankfurt/ETR rows), the system date (column 3) is
+   used instead. This gives 59.4M price events for 4,970 symbols (FR, NL, ETR).
+2. **Window.** Events are keyed by symbol and grouped into 5-minute tumbling
+   event-time windows. Each window keeps only its latest price (incremental reduce).
+3. **EMA and crossover.** When a window fires, keyed state updates
+   EMA_j = Last·(2/(1+j)) + EMA_j,prev·(1 − 2/(1+j)) for j = 38 and 100.
+   - BUY: EMA38 > EMA100 now, and EMA38 ≤ EMA100 in the previous window.
+   - SELL: EMA38 < EMA100 now, and EMA38 ≥ EMA100 in the previous window.
+   - Both EMAs are seeded with the symbol's first price, so the first window
+     never has an advisory.
+   - With `--strict-crossover`, the previous comparison must be strict (`<` / `>`).
+     This removes "crossovers" that start from equal EMAs, for example in a
+     symbol's second window, right after seeding.
+
+Only windows that contain events are emitted. Empty windows are skipped.
+
+**Determinism.** With the default 200 h tolerance, no event is ever late, and
+all windows fire when the input ends. The output is therefore identical at every
+parallelism level.
+
+## Results (full week, 7 days)
+
+| | value |
+|---|---|
+| windows | 1,857,457 |
+| crossovers (default rule) | 24,836 |
+| crossovers (`--strict-crossover`) | 19,989 |
+
+## Checking correctness
+
+Compare two output folders. The script reports window counts, crossovers and any
+differing windows:
+
+```
+python3 compare_runs.py output/p1 output/p8
+```
+
+Results must be IDENTICAL across parallelism levels.
+
+## Experiments
+
+| Script | What it measures | Output |
+|---|---|---|
+| `benchmark.sh` | runtime at parallelism 1/2/4/8, 4 and 7 days, 3 runs | `logs/bench_times.csv` (summarise with `python3 bench_summary.py logs/bench_times.csv`) |
+| `stage_bench.sh` | runtime of only reading / reading+parsing | `logs/stage_times.csv` |
+| `resource_bench.sh` | volume scaling (1–7 days) and CPU % / peak memory | `logs/resource_times.csv` |
+
+Key skew per worker (uses Flink's own key-group assignment):
+
+```
+java -jar java-job/target/ema-crossover-1.0.jar --input data/raw --output output/stats --stage symbolstats
+java -cp java-job/target/ema-crossover-1.0.jar ema.SkewReport output/stats/symbolstats
+```
+
+Median runtime for the full week (3 runs, 12-thread laptop CPU):
+109 s (1 worker), 77 s (2), 66 s (4), 57 s (8).
