@@ -5,6 +5,7 @@ import java.time.Duration;
 import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.api.common.eventtime.SerializableTimestampAssigner;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.api.common.functions.FilterFunction;
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.functions.ReduceFunction;
@@ -75,6 +76,20 @@ public class Job {
             if (e != null) {
                 out.collect(e);
             }
+        }
+    }
+
+    /** Keeps only events of one exchange (the symbol suffix after the last dot, e.g. FR, NL, ETR). */
+    public static class ExchangeFilter implements FilterFunction<Tuple4<String, String, Double, Long>> {
+        private final String exchange;
+
+        public ExchangeFilter(String exchange) {
+            this.exchange = exchange;
+        }
+
+        @Override
+        public boolean filter(Tuple4<String, String, Double, Long> e) {
+            return exchange.equals(e.f1);
         }
     }
 
@@ -183,6 +198,7 @@ public class Job {
         boolean requireTradingDate = false;
         String sourceType = "file";
         String parser = "fast";
+        String exchange = "ALL";
         for (int i = 0; i < argv.length; i++) {
             switch (argv[i]) {
                 case "--input": input = argv[++i]; break;
@@ -196,10 +212,11 @@ public class Job {
                 case "--require-trading-date": requireTradingDate = true; break;
                 case "--source": sourceType = argv[++i]; break;
                 case "--parser": parser = argv[++i]; break;
+                case "--exchange": exchange = argv[++i].toUpperCase(); break;
                 default:
                     System.err.println("Unknown option: " + argv[i]);
                     System.err.println("Options: --input --output --parallelism --tolerance-hours "
-                            + "--strict-crossover --late-output --stage --object-reuse --require-trading-date --source file|legacy --parser fast|reference");
+                            + "--strict-crossover --late-output --stage --object-reuse --require-trading-date --source file|legacy --parser fast|reference --exchange FR|NL|ETR|ALL");
                     System.exit(2);
             }
         }
@@ -207,7 +224,7 @@ public class Job {
                 + " tolerance_h=" + toleranceHours + " strict=" + strict + " stage=" + stage
                 + " objectReuse=" + objectReuse
                 + " requireTradingDate=" + requireTradingDate
-                + " source=" + sourceType + " parser=" + parser);
+                + " source=" + sourceType + " parser=" + parser + " exchange=" + exchange);
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(parallelism);
@@ -247,6 +264,11 @@ public class Job {
         SingleOutputStreamOperator<Tuple4<String, String, Double, Long>> events =
                 rawLines.flatMap(new ParseFn(!requireTradingDate, parser.equals("reference")))
                         .returns(Types.TUPLE(Types.STRING, Types.STRING, Types.DOUBLE, Types.LONG));
+        if (!exchange.equals("ALL")) {
+            // Per-exchange experiments: all files are still read and parsed; only the events
+            // of one exchange go on to the keyed window stage. Default ALL adds no operator.
+            events = events.filter(new ExchangeFilter(exchange));
+        }
 
         if (stage.equals("symbolstats")) {
             // Price events per symbol -> <output>/symbolstats (symbol,count). Used for

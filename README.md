@@ -58,6 +58,7 @@ java -Xmx5g -XX:+UseParallelGC -jar java-job/target/ema-crossover-1.0.jar \
 | `--require-trading-date` | off | drop rows with an empty Trading date instead of using the system date |
 | `--object-reuse` | off | Flink object reuse (performance experiment) |
 | `--parser fast\|reference` | `fast` | `reference` = original split-based parser (ablation) |
+| `--exchange FR\|NL\|ETR\|ALL` | `ALL` | keep only the events of one exchange (symbol suffix); all files are still read and parsed |
 | `--stage <s>` | `full` | `read`, `parse`, `symbolstats` or `full` (see Experiments) |
 
 ### Output format
@@ -134,6 +135,8 @@ See `java-job/viz/README.md` for the options.
 | `benchmark.sh` | runtime at parallelism 1/2/4/8, 4 and 7 days, 3 runs | `logs/bench_times.csv` (summarise with `python3 bench_summary.py logs/bench_times.csv`) |
 | `stage_bench.sh` | runtime of only reading / reading+parsing | `logs/stage_times.csv` |
 | `ablation.sh` | one-factor-at-a-time ablation: parser, GC, source, file splitting, object reuse (7 days, p=8) | `logs/ablation_times.csv`, `logs/ablation.log` |
+| `scripts/exchange_bench.sh` | per exchange (FR, NL, ETR, ALL) at parallelism 1/2/4/8, 7 days, 2 runs | `logs/exchange_times.csv` |
+| `scripts/cpu_limit_bench.sh` | 7 days at parallelism 8 limited with `taskset` to 1/2/4/6/12 CPUs, 2 runs | `logs/cpu_limit_times.csv` |
 | `resource_bench.sh` | volume scaling (1–7 days) and CPU % / peak memory | `logs/resource_times.csv` |
 
 Key skew per worker (uses Flink's own key-group assignment):
