@@ -1,0 +1,18 @@
+Part C starting 13:12
+13:15 cpus=1 (0) rep=1 155.112759379s cpu=153.89s rss=2743792kB
+13:16 cpus=2 (0,2) rep=1 90.072000512s cpu=175.28s rss=2771932kB
+13:17 cpus=4 (0,2,4,6) rep=1 57.513365603s cpu=214.52s rss=2713480kB
+13:18 cpus=6 (0,2,4,6,8,10) rep=1 49.796634580s cpu=268.39s rss=2713816kB
+13:19 cpus=12 (0-11) rep=1 42.636099512s cpu=339.48s rss=2724512kB
+13:22 cpus=1 (0) rep=2 166.923111453s cpu=165.47s rss=2776628kB
+13:23 cpus=2 (0,2) rep=2 83.248835903s cpu=161.69s rss=2769492kB
+13:24 cpus=4 (0,2,4,6) rep=2 61.228464117s cpu=227.68s rss=2771276kB
+13:25 cpus=6 (0,2,4,6,8,10) rep=2 52.203970970s cpu=268.21s rss=2776296kB
+13:26 cpus=12 (0-11) rep=2 44.689458692s cpu=359.73s rss=2743088kB
+
+Medians per CPU count (wall s, CPU s, CPU s / wall s = average busy CPUs):
+  1 CPUs    161.0 s wall    159.7 s CPU   0.99 busy
+  2 CPUs     86.7 s wall    168.5 s CPU   1.94 busy
+  4 CPUs     59.4 s wall    221.1 s CPU   3.72 busy
+  6 CPUs     51.0 s wall    268.3 s CPU   5.26 busy
+ 12 CPUs     43.7 s wall    349.6 s CPU   8.01 busy
