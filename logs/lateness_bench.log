@@ -1,0 +1,22 @@
+15:47 tol=200h rep=1 57.391162715s late=0 rows=1484331 differing=0
+15:48 tol=24h rep=1 47.184825381s late=0 rows=1484331 differing=0
+15:49 tol=6h rep=1 45.167846889s late=5506 rows=1482519 differing=656482
+15:50 tol=1h rep=1 43.130461850s late=5506 rows=1482519 differing=656482
+15:50 tol=0.1h rep=1 37.023395063s late=5506 rows=1482519 differing=656482
+15:51 tol=200h rep=2 38.122690227s late=0 rows=1484331 differing=0
+15:52 tol=24h rep=2 41.287539508s late=0 rows=1484331 differing=0
+15:53 tol=6h rep=2 38.352576172s late=5506 rows=1482519 differing=656482
+15:53 tol=1h rep=2 33.512232551s late=5506 rows=1482519 differing=656482
+15:54 tol=0.1h rep=2 38.795813203s late=5506 rows=1482519 differing=656482
+
+tolerance_hours  rep  seconds       late_events  result_rows  rows_differing
+200              1    57.391162715  0            1484331      0
+24               1    47.184825381  0            1484331      0
+6                1    45.167846889  5506         1482519      656482
+1                1    43.130461850  5506         1482519      656482
+0.1              1    37.023395063  5506         1482519      656482
+200              2    38.122690227  0            1484331      0
+24               2    41.287539508  0            1484331      0
+6                2    38.352576172  5506         1482519      656482
+1                2    33.512232551  5506         1482519      656482
+0.1              2    38.795813203  5506         1482519      656482

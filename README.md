@@ -137,6 +137,7 @@ See `java-job/viz/README.md` for the options.
 | `ablation.sh` | one-factor-at-a-time ablation: parser, GC, source, file splitting, object reuse (7 days, p=8) | `logs/ablation_times.csv`, `logs/ablation.log` |
 | `scripts/exchange_bench.sh` | per exchange (FR, NL, ETR, ALL) at parallelism 1/2/4/8, 7 days, 2 runs | `logs/exchange_times.csv` |
 | `scripts/cpu_limit_bench.sh` | 7 days at parallelism 8 limited with `taskset` to 1/2/4/6/12 CPUs, 2 runs | `logs/cpu_limit_times.csv` |
+| `scripts/lateness_bench.sh` | late events vs `--tolerance-hours` 200/24/6/1/0.1, 4 days, parallelism 4, 2 runs | `logs/lateness_times.csv` |
 | `resource_bench.sh` | volume scaling (1–7 days) and CPU % / peak memory | `logs/resource_times.csv` |
 
 Key skew per worker (uses Flink's own key-group assignment):
