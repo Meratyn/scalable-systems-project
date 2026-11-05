@@ -3,6 +3,7 @@
 % TODO markers: search for "TODO".
 \documentclass[sigconf,nonacm]{acmart}
 \usepackage{booktabs}
+\usepackage{graphicx}
 \usepackage{pgfplots}
 \pgfplotsset{compat=1.17}
 \usetikzlibrary{positioning,arrows.meta}
@@ -105,6 +106,16 @@ Total & 4,970 & 59.4M & \\
 \end{tabular}
 \end{table}
 
+\paragraph{Times and a data quirk.} Trading times are local exchange time:
+CET (UTC+1) in November 2021. The specification mentions CEST, but that is the
+summer offset. We treat the wall-clock times as instants and never convert them,
+so the offset changes no window or result. One quirk: on 10 November, 5,506
+index rows for 1,812 FR/NL indices were published at 18:56 with an empty
+\texttt{Trading date} and a placeholder \texttt{Trading time} of 01:00:00.000.
+The system-date fallback places them at 01:00 that morning, which creates one
+window per index outside trading hours and 51 real crossings. We keep them as the
+data defines them.
+
 \paragraph{Assumptions.} These are our interpretations; the open questions are
 listed in Section~\ref{sec:discussion}.
 \begin{itemize}
@@ -195,7 +206,8 @@ Section~\ref{sec:ablation} quantifies both effects on the final code.
 
 \paragraph{Setup.} All runs use one laptop with an Intel Core i5-12450H
 (4 performance cores with 2 threads each, plus 4 efficiency cores: 12 hardware
-threads), Windows 11 with WSL2 (Ubuntu, 7.6\,GB memory available to Linux), the
+threads; WSL2 presents them as six identical two-thread cores), Windows 11 with
+WSL2 (Ubuntu, 7.6\,GB memory available to Linux), the
 data on the local SSD, OpenJDK 11.0.32, Flink 1.20.1, and
 \texttt{-Xmx5g -XX:+UseParallelGC}.
 Runtime is the wall-clock time of the whole process, including JVM and Flink
@@ -210,7 +222,24 @@ week. Results are compared key by key with \texttt{compare\_runs.py}: outputs at
 parallelism 1, 2, 4 and 8, with both source implementations, with both parsers,
 and with the input split into 8 chunks per day are all identical. On a
 20-minute slice we checked the EMA values against an independent PyFlink
-implementation of the same formulas.
+implementation of the same formulas. A JUnit test (9 cases, 6\,s) runs the job
+in-process at parallelism 1 and 2 with both crossover rules on a synthetic file.
+The file contains real BUY and SELL crossings, an equal-start signal, a constant
+price, rows with \texttt{Last}=0 or empty, empty trading dates, and an
+out-of-order event. The test compares every window with an independent plain-loop
+implementation of the specification. Two injected bugs (a wrong comparison, and
+keeping the first instead of the latest event) both make it fail.
+
+\paragraph{Rounding.} The update $P\alpha + \mathit{EMA}_\mathit{prev}(1-\alpha)$
+is not exact in floating point. For a constant price of 50, EMA38 becomes
+49.999999999999986 while EMA100 stays 50, so the literal rule can fire on a
+difference of $10^{-15}$. In the full week, 594 literal signals (2.4\,\%) have an
+EMA gap below $10^{-12}$ of the price and an unchanged window price. All of them
+are equal-start signals, so the strict rule removes them. Rounding also leaves
+EMAs a hair apart after flat stretches: 260 strict signals (1.3\,\%) start from
+previous EMAs that differ only by rounding, which exact arithmetic would treat as
+equal. Writing the update as $\mathit{EMA}_\mathit{prev} + \alpha(P-\mathit{EMA}_\mathit{prev})$
+would be exact for constant prices; we did not re-run the job with it.
 
 \subsection{Scalability with parallelism}
 Table~\ref{tab:speedup} and Figure~\ref{fig:speedup} show runtime and speedup
@@ -272,22 +301,26 @@ what we measure (Figure~\ref{fig:speedup}). The load is not dominated by a few
 heavy symbols: the busiest symbol holds only 0.27\,\% of events, and 306
 symbols (6\,\%) are needed to cover half of all events.
 
-\paragraph{Window and EMA work --- negligible.} Runs that stop after reading
+\paragraph{Window and EMA work --- small.} Runs that stop after reading
 (\texttt{--stage read}) or after parsing (\texttt{--stage parse}) show that
-reading and parsing account for nearly all of the runtime; the keyed stages add
-almost nothing. Reading alone took 61\,s with one worker and 26\,s with eight
-(2.3$\times$).
+reading and parsing take most of the runtime. Reading alone took 61\,s with one
+worker and 26\,s with eight (2.3$\times$). Runs restricted to one exchange
+(\texttt{--exchange}, Table~\ref{tab:exchcpu}) still read and parse every file.
+NL, with 10\,\% of the price events, takes 72\,s with one worker against 86\,s
+for all exchanges, and 38.5\,s against 46.2\,s with eight. The window and EMA
+stage for all 59.4M events therefore costs roughly 14\,s and 8\,s. The speedup at
+8 workers is 1.7--2.0$\times$ for every exchange.
 
 \paragraph{CPU --- not saturated.} At 8 workers the process uses 7.6--7.8 cores
 on average (764--778\,\% CPU) out of 12 hardware threads. The machine is busy
 but not at its limit, and only 8 of the 12 hardware threads belong to performance
 cores; the other 4 run on slower efficiency cores.
 
-\paragraph{One reader per file --- the main limit.} \texttt{FileSource} with a
+\paragraph{One reader per file --- likely the main limit.} \texttt{FileSource} with a
 text-line format does not split files: each file is read and parsed by exactly
 one worker. The week has only five large files, so at most five readers do real
 work, and the run cannot finish before the largest file (5.5\,GB) has been read
-by a single thread. Table~\ref{tab:volume} confirms this. With 8 workers, one
+by a single thread. Table~\ref{tab:volume} is consistent with this. With 8 workers, one
 day (exactly that largest file) takes 31\,s and uses only 2.2 cores; seven days
 take only 1.7$\times$ longer for 4.5$\times$ more data. Throughput grows with the
 number of files, not with the number of workers.
@@ -305,6 +338,41 @@ Input & Files & Lines & Time & Lines/s & CPU \\
 \bottomrule
 \multicolumn{6}{l}{\footnotesize $^\ast$5 large weekday files and 2 near-empty weekend files.}\\
 \multicolumn{6}{l}{\footnotesize Peak memory (RSS) 2.2--2.8\,GB in all runs.}\\
+\end{tabular}
+\end{table}
+
+\paragraph{Limiting the CPUs.} We pinned the 8-worker job to 1--12 logical
+CPUs with \texttt{taskset} (Table~\ref{tab:exchcpu}, bottom). Runtime falls from
+161\,s on one CPU to 43.7\,s on twelve (3.7$\times$). Over the same range, the
+CPU time for the same work rises from 160\,s to 350\,s (2.2$\times$).
+From 6 to 12 CPUs, the runtime drops 14\,\% for 30\,\% more CPU time, and even
+with 12 CPUs available only 8.0 are busy on average. Each added CPU therefore
+contributes less. We did not test why. Plausible causes are coordination and
+garbage-collection overhead, hyperthread siblings sharing a core, and slower
+efficiency cores. WSL2 hides which host cores are performance cores, so our CPU
+sets (one thread per virtual core first) cannot separate these effects.
+
+\begin{table}[t]
+\caption{Per-exchange runs (top) and CPU-limited runs at 8 workers (bottom);
+7 days, median of 2 runs. Measured in separate sessions from
+Table~\ref{tab:speedup}.}\label{tab:exchcpu}
+\begin{tabular}{lrrrr}
+\toprule
+Exchange & Events & 1 worker & 8 workers & Speedup \\
+\midrule
+NL  &  6.0M & 72.2\,s & 38.5\,s & 1.88 \\
+ETR & 32.0M & 77.3\,s & 38.6\,s & 2.00 \\
+FR  & 21.4M & 74.0\,s & 43.3\,s & 1.71 \\
+All & 59.4M & 85.8\,s & 46.2\,s & 1.86 \\
+\midrule
+CPUs & Time & CPU time & Busy CPUs & Speedup \\
+\midrule
+1  & 161.0\,s & 159.7\,s & 0.99 & 1.00 \\
+2  &  86.7\,s & 168.5\,s & 1.94 & 1.86 \\
+4  &  59.4\,s & 221.1\,s & 3.72 & 2.71 \\
+6  &  51.0\,s & 268.3\,s & 5.26 & 3.16 \\
+12 &  43.7\,s & 349.6\,s & 8.01 & 3.68 \\
+\bottomrule
 \end{tabular}
 \end{table}
 
@@ -351,16 +419,43 @@ effect (2\,\% is within run-to-run noise). The legacy source is slower even
 though it splits files, and it keeps the CPU less busy. We did not
 investigate why, because this API is deprecated and removed in Flink 2.0.
 
+\section{Visualisation}\label{sec:viz}
+To inspect the results we built a static web page (vanilla JavaScript, no
+server) from the job's output (Figure~\ref{fig:viz}). It shows EMA38, EMA100
+and the signals per symbol, with zoom, a literal/strict toggle, a day $\times$
+hour heat map of crossings, and the benchmark results. It revealed two problems
+that the aggregate counts hid: the 01:00 index window
+(Section~\ref{sec:data}) and \emph{flat} symbols. 1,004 symbols move less than
+0.5\,\% in EMA38 over the week, and two of them were the top crossers, whose
+crossings came from single-tick price changes. The page draws only non-flat
+symbols by default; all totals still include every symbol.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/viz-chart.png}
+\caption{The result explorer for Philips (PHIA.NL): EMA38 (solid) and EMA100
+(dashed) per 5-minute window, BUY (blue) and SELL (orange) triangles, one hollow equal-start signal, and the
+EMA spread below.}\label{fig:viz}
+\end{figure}
+
 \section{Discussion and Limitations}\label{sec:discussion}
 \paragraph{Throughput, not latency.} We replay a static dataset as fast as
 possible and report throughput. With a 200\,h watermark tolerance, results
 appear only when the input ends, so per-event latency is not meaningful in this
 setup. A live deployment would use a tolerance of seconds to minutes and accept
 a small number of late events. Our side output makes that trade-off measurable.
+On the 4-day data at 4 workers, tolerances of 200\,h and 24\,h give no late
+events. Tolerances of 6\,h, 1\,h and 0.1\,h all give exactly 5,506 late
+events, the same in two runs. These are the 01:00 index rows of
+Section~\ref{sec:data}, which appear in the file about 18\,h after their event
+time; no other event is out of order by more than 6 minutes. Dropping them
+removes 1,812 windows and changes 656,482 of the 1,484,331 results (by more
+than $10^{-9}$), because the EMAs of most later windows of those indices shift.
 % TODO: update after the professor's answer on latency expectations.
 
 \paragraph{Interpretation choices.} The literal versus strict crossover rule
-changes the result count by 19.5\,\%, and the handling of empty windows and of
+changes the result count by 19.5\,\%, floating-point rounding moves another
+1--2\,\% (Section~\ref{sec:correct}), and the handling of empty windows and of
 rows without a trading date changes which windows exist at all. We report the
 literal rule as the main result and provide the others as options.
 % TODO: update after the professor's answers.
