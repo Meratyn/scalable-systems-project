@@ -145,8 +145,8 @@ so the offset changes no window or result. One quirk: on 10 November, 5,506
 index rows for 1,812 FR/NL indices were published at 18:56 with an empty
 \texttt{Trading date} and a placeholder \texttt{Trading time} of 01:00:00.000.
 The system-date fallback places them at 01:00 that morning, which creates one
-window per index outside trading hours and 51 real crossings. We keep them as the
-data defines them.
+window per index outside trading hours with 53 advisories under the literal
+rule (51 under the strict rule). We keep them as the data defines them.
 
 \paragraph{Rules confirmed by the instructor.} The crossover rule is the
 literal one of Equations (1)--(4), including equality in the previous window
@@ -537,11 +537,28 @@ setup. A live deployment would use a tolerance of seconds to minutes and accept
 a small number of late events. Our side output makes that trade-off measurable.
 On the full week at 8 workers, tolerances of 200\,h and 24\,h give no late
 events. Tolerances of 6\,h, 1\,h and 0.1\,h all give exactly 5,506 late
-events, the same in two runs; this matches the number of 01:00 index rows of
-Section~\ref{sec:data}, which appear in the file about 18\,h after their event
-time. Dropping them removes 1,812 windows and changes 656,800 of the 1,857,457
-results (by more than $10^{-9}$), because the EMAs of most later windows of
-those indices shift.
+events, the same in two runs. In the 0.1\,h run these are exactly the 5,506
+price rows with the 01:00:00.000 placeholder time of Section~\ref{sec:data}
+(index rows of 1,812 FR/NL indices with an empty \texttt{Trading date}, in the
+10 November file about 18\,h after their event time); no other event is late.
+Dropping them removes the 01:05 window of each of these indices, with 53
+advisories under the literal rule (51 under the strict rule). Only these
+indices are affected: all other symbols give bit-identical results. For 1,810
+of them the dropped window is not their first, so the seed is unchanged, but
+the EMAs miss one update; the difference decays only by a factor of 37/39
+(EMA38) and 99/101 (EMA100) per window, so it persists in later windows (up to
+1.6\,\% for EMA38 and 0.74\,\% for EMA100). For the other two indices the
+dropped window was the first, so their seed changes. In later windows of the
+affected indices 886 advisories disappear and 903 appear (none flips between
+BUY and SELL), giving 24,800 advisories instead of 24,836.
+Our main run uses the 200\,h tolerance because it makes the results
+independent of parallelism and reading order. In our replay, a 6-minute
+tolerance changes only the 1,812 placeholder-time indices: the total changes
+by 36 of 24,836 advisories (0.15\,\%; 1,842 individual advisories differ, all
+in these indices), and every other symbol stays bit-identical. A streaming
+deployment could therefore use a short tolerance and emit each window about
+6 minutes after it ends in event time. Since our runs read the files at full
+speed, we measure throughput and cannot measure streaming latency.
 % TODO: update after the professor's answer on latency expectations.
 
 \paragraph{Interpretation choices.} The crossover rule and the window price
