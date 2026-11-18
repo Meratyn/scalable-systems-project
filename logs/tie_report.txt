@@ -1,0 +1,10 @@
+files=7 price_events=59391670 groups=1857457
+tied_groups=92233 (max timestamp shared by >=2 events)
+  same_file=92233 multi_file=0
+  tied events per group: 2=52834 3=20157 4=8513 5=4175 6+=6554 (max 539)
+tied_groups_with_different_prices=23320
+  same_file=23320 multi_file=0
+exchange ETR: tied=27947 tied_diff_price=10051 diff_price_multi_file=0
+exchange FR: tied=48064 tied_diff_price=10995 diff_price_multi_file=0
+exchange NL: tied=16222 tied_diff_price=2274 diff_price_multi_file=0
+seconds=266.9

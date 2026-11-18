@@ -1,11 +1,11 @@
 #!/bin/bash
-# Late events vs watermark tolerance: 4-day data (data/raw4), parallelism 4, --late-output,
+# Late events vs watermark tolerance: full week (data/raw, 7 days), parallelism 8 (as the main run), --late-output,
 # --tolerance-hours 200 (reference, run first), 24, 6, 1, 0.1; 2 repetitions each.
 # A smaller tolerance lets windows fire earlier, but events that arrive after their window has
 # closed are late: they go to <output>/late instead of the results, so windows can change.
 # With a small tolerance the result can also differ between runs (it depends on which reader gets
 # which file and how fast each reads); the 2 repetitions show this.
-# Usage (from anywhere):  scripts/lateness_bench.sh   (~12 min)
+# Usage (from anywhere):  scripts/lateness_bench.sh   (~15-20 min)
 # Output: logs/lateness_times.csv
 #   tolerance_hours,rep,seconds,late_events,result_rows,rows_differing
 #   rows_differing = windows only in the reference + only in this run + in both with different values,
@@ -34,7 +34,7 @@ for rep in $(seq 1 $REPS); do
     tmp=output/latebench_tmp
     rm -rf $tmp
     start=$(date +%s.%N)
-    java -Xmx5g -XX:+UseParallelGC -jar $JAR --input data/raw4 --output $tmp --parallelism 4 \
+    java -Xmx5g -XX:+UseParallelGC -jar $JAR --input data/raw --output $tmp --parallelism 8 \
          --tolerance-hours $tol --late-output > /dev/null 2>&1
     rc=$?
     end=$(date +%s.%N)

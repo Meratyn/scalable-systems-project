@@ -1,0 +1,10 @@
+2026-11-18 17:02:33 start
+17:04:17 first rc=0 103.385758925s
+17:05:35 zero rc=0 78.204260378s
+output/w2_p8: 1857457 windows, 24836 crossovers, 0 late events
+output/w2_p8_emafirst: 1857457 windows, 24836 crossovers, 0 late events
+windows only in output/w2_p8: 0
+windows only in output/w2_p8_emafirst: 0
+windows in both with different values: 0
+IDENTICAL
+2026-11-18 17:05:48 done

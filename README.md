@@ -85,12 +85,26 @@ epoch milliseconds (UTC).
    - BUY: EMA38 > EMA100 now, and EMA38 ≤ EMA100 in the previous window.
    - SELL: EMA38 < EMA100 now, and EMA38 ≥ EMA100 in the previous window.
    - Both EMAs are seeded with the symbol's first price, so the first window
-     never has an advisory.
-   - With `--strict-crossover`, the previous comparison must be strict (`<` / `>`).
+     never has an advisory. The spec starts at 0; our seed is allowed by the
+     instructor if the choice is explained (`--ema-init zero` gives the spec's start).
+   - This literal rule (equality in the previous window allowed) is confirmed by
+     the instructor and is the main result (24,836 advisories for the full week).
+   - With `--strict-crossover`, the previous comparison must be strict (`<` / `>`);
+     this is an extra analysis only.
      This removes "crossovers" that start from equal EMAs, for example in a
      symbol's second window, right after seeding.
 
 Only windows that contain events are emitted. Empty windows are skipped.
+
+**Window price and ties.** The window price is the event with the latest
+trading timestamp (confirmed by the instructor). On equal timestamps the later
+event in input order wins: files sorted by name (the day), then line. In file
+mode (`--source file`) each file has one reader and Flink's channels keep line
+order, so the later line of the file wins at every parallelism (JUnit test
+`equalTimestampsTakeTheLaterLinesPrice`). In the full week 92,233 of 1,857,457
+windows (5.0 %) have a shared latest timestamp, 23,320 (1.26 %) with different
+prices, all within a single file (`ema.TieReport`, `logs/tie_report.txt`).
+`--source legacy` splits files across readers and is not covered by this rule.
 
 **Determinism.** With the default 200 h tolerance, no event is ever late, and
 all windows fire when the input ends. The output is therefore identical at every
@@ -137,7 +151,7 @@ See `java-job/viz/README.md` for the options.
 | `ablation.sh` | one-factor-at-a-time ablation: parser, GC, source, file splitting, object reuse (7 days, p=8) | `logs/ablation_times.csv`, `logs/ablation.log` |
 | `scripts/exchange_bench.sh` | per exchange (FR, NL, ETR, ALL) at parallelism 1/2/4/8, 7 days, 2 runs | `logs/exchange_times.csv` |
 | `scripts/cpu_limit_bench.sh` | 7 days at parallelism 8 limited with `taskset` to 1/2/4/6/12 CPUs, 2 runs | `logs/cpu_limit_times.csv` |
-| `scripts/lateness_bench.sh` | late events vs `--tolerance-hours` 200/24/6/1/0.1, 4 days, parallelism 4, 2 runs | `logs/lateness_times.csv` |
+| `scripts/lateness_bench.sh` | late events vs `--tolerance-hours` 200/24/6/1/0.1, 7 days, parallelism 8, 2 runs | `logs/lateness_times.csv` |
 | `resource_bench.sh` | volume scaling (1–7 days) and CPU % / peak memory | `logs/resource_times.csv` |
 
 Key skew per worker (uses Flink's own key-group assignment):
@@ -145,6 +159,12 @@ Key skew per worker (uses Flink's own key-group assignment):
 ```
 java -jar java-job/target/ema-crossover-1.0.jar --input data/raw --output output/stats --stage symbolstats
 java -cp java-job/target/ema-crossover-1.0.jar ema.SkewReport output/stats/symbolstats
+```
+
+Timestamp ties per (symbol, window) (single pass, ~4.5 min, 2.1 GB):
+
+```
+java -Xmx3g -cp java-job/target/ema-crossover-1.0.jar ema.TieReport data/raw > logs/tie_report.txt
 ```
 
 Median runtime for the full week (3 runs, 12-thread laptop CPU):

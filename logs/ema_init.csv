@@ -1,0 +1,3 @@
+mode,advisories,buy,sell,first_window_advisories,adv_first100,adv_later,symbols,symbols_ge100,conv_median_windows,conv_p25,conv_p75,conv_never
+first,24836,12585,12251,0,10981,13855,4970,3365,1.0,1,1,0
+zero,11355,7772,3583,4970,4970,6385,4970,3365,88,86,89,1523

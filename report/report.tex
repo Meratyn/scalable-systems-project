@@ -86,8 +86,8 @@ Each row has 39 columns. We use four: the symbol (\texttt{ID}), \texttt{Last}
 \texttt{Trading date} + \texttt{Trading time} (UTC). For index rows and all
 Frankfurt (ETR) rows, \texttt{Trading date} is empty. In that case we use the
 row's system date (column 3), which is the trading day of the file. An early
-version of our parser dropped these rows and silently lost 53.9\,\% of all
-price events, including every ETR symbol. Table~\ref{tab:data} summarises the
+version of our parser dropped these rows and silently lost 91.7\,\% of all
+price events (54.5M of 59.4M), including every ETR symbol. Table~\ref{tab:data} summarises the
 corrected input.
 
 \begin{table}[t]
@@ -106,6 +106,38 @@ Total & 4,970 & 59.4M & \\
 \end{tabular}
 \end{table}
 
+\paragraph{Rows without a trading date.} The instructor allows rows with an
+empty \texttt{Trading date} to be ignored. We ran both variants on the full
+week (parallelism 8, literal rule; Table~\ref{tab:datevar}). Our main run uses
+the system-date fallback; the instructor-aligned variant
+(\texttt{--require-trading-date}) drops these rows. Dropping them removes
+91.7\,\% of the price events (54.5M of 59.4M), 91.6\,\% of the result rows
+(1,700,554 of 1,857,457), 80.9\,\% of the symbols (4,020 of 4,970) and
+88.4\,\% of the signals (21,947 of 24,836). ETR disappears completely, since
+no Frankfurt row has a trading date; FR keeps 789 of its 2,285 symbols and NL
+161 of 559. We report the fallback as the main result and the drop variant
+for comparison.
+
+\begin{table}[t]
+\caption{Trading-date variants (full week, parallelism 8, literal rule).
+Fallback = main run; drop = \texttt{--require-trading-date}. ``Dropped'' is
+(fallback $-$ drop) / fallback for the quantity in that row.}\label{tab:datevar}
+\small
+\begin{tabular}{lrrr}
+\toprule
+ & Fallback & Drop & Dropped \\
+\midrule
+Price events       & 59,391,670 & 4,912,043 & 91.7\,\% \\
+Result rows        &  1,857,457 &   156,903 & 91.6\,\% \\
+Symbols            &      4,970 &       950 & 80.9\,\% \\
+\quad ETR / FR / NL & 2,126 / 2,285 / 559 & 0 / 789 / 161 & \\
+Signals (BUY+SELL) &     24,836 &     2,889 & 88.4\,\% \\
+\quad BUY / SELL    & 12,585 / 12,251 & 1,425 / 1,464 & \\
+\quad ETR / FR / NL & 8,805 / 12,419 / 3,612 & 0 / 2,309 / 580 & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \paragraph{Times and a data quirk.} Trading times are local exchange time:
 CET (UTC+1) in November 2021. The specification mentions CEST, but that is the
 summer offset. We treat the wall-clock times as instants and never convert them,
@@ -116,18 +148,33 @@ The system-date fallback places them at 01:00 that morning, which creates one
 window per index outside trading hours and 51 real crossings. We keep them as the
 data defines them.
 
-\paragraph{Assumptions.} These are our interpretations; the open questions are
-listed in Section~\ref{sec:discussion}.
+\paragraph{Rules confirmed by the instructor.} The crossover rule is the
+literal one of Equations (1)--(4), including equality in the previous window
+(Section~\ref{sec:design}). The window's price $P$ is the price event with the
+latest trading timestamp in the window. On equal timestamps the event that
+comes later in input order wins (files by name, i.e.\ by day, then line). Ties
+are common: in 92,233 of the 1,857,457 (symbol, window) groups (5.0\,\%) the
+latest timestamp is shared by two or more events, and in 23,320 (1.26\,\%)
+those events have different prices (ETR 10,051, FR 10,995, NL 2,274). All of
+these ties lie within a single file. Our file source reads each file with one
+reader and Flink's channels keep the order, so the later line always wins at
+every parallelism; a unit test checks this. Both EMAs of a symbol are seeded
+with its first price instead of the specification's 0, so the first window has
+no advisory; this is allowed by the instructor if the choice is explained.
+
+\paragraph{Our assumptions.} These are our own choices; we discuss them in
+Section~\ref{sec:discussion}.
 \begin{itemize}
-\item The window's price $P$ is the price event with the latest trading
-  timestamp in the window. Ties are broken by arrival order.
-\item The EMAs of a symbol are seeded with its first price, so the first
-  window has no advisory.
 \item A window in which a symbol has no price event produces no output and
   does not update the EMAs.
+\item A row with an empty \texttt{Trading date} takes the system date; the
+  instructor also allows dropping it, and we report both variants
+  (Table~\ref{tab:datevar}).
+\item No event is late: the watermark tolerance (200\,h) exceeds the dataset,
+  so out-of-order events still count (Section~\ref{sec:design}).
 \end{itemize}
 
-\section{System Design}
+\section{System Design}\label{sec:design}
 Figure~\ref{fig:pipeline} shows the dataflow.
 
 \begin{figure}[t]
@@ -172,11 +219,12 @@ to the next and are partitioned together with the key. Windows of one key fire
 in event-time order, so the state is updated in the correct order. A buy
 advisory is emitted when $\mathit{EMA}_{38} > \mathit{EMA}_{100}$ now and
 $\mathit{EMA}_{38,\mathit{prev}} \le \mathit{EMA}_{100,\mathit{prev}}$; sell is
-symmetric. This literal reading of the specification also fires when the
-previous EMAs were \emph{equal}, which happens in a symbol's second window,
-right after seeding. A \texttt{--strict-crossover} option requires a strict
-previous inequality instead. Of the 24,836 literal crossovers, 4,847
-(19.5\,\%) come from such equal starts; the strict rule yields 19,989.
+symmetric. This is the literal rule of the specification, confirmed by the
+instructor, and our primary result: 24,836 advisories for the full week. It
+also fires when the previous EMAs were \emph{equal}, which happens in a
+symbol's second window, right after seeding. As an extra analysis of these
+4,847 equal-start signals (19.5\,\%), a \texttt{--strict-crossover} option
+requires a strict previous inequality; it yields 19,989.
 
 \paragraph{Watermarks and determinism.} Event times inside a file are not in
 order: old trades are re-reported, and the files are read concurrently. We use
@@ -222,13 +270,14 @@ week. Results are compared key by key with \texttt{compare\_runs.py}: outputs at
 parallelism 1, 2, 4 and 8, with both source implementations, with both parsers,
 and with the input split into 8 chunks per day are all identical. On a
 20-minute slice we checked the EMA values against an independent PyFlink
-implementation of the same formulas. A JUnit test (9 cases, 6\,s) runs the job
+implementation of the same formulas. A JUnit test (10 cases, 6\,s) runs the job
 in-process at parallelism 1 and 2 with both crossover rules on a synthetic file.
 The file contains real BUY and SELL crossings, an equal-start signal, a constant
-price, rows with \texttt{Last}=0 or empty, empty trading dates, and an
-out-of-order event. The test compares every window with an independent plain-loop
-implementation of the specification. Two injected bugs (a wrong comparison, and
-keeping the first instead of the latest event) both make it fail.
+price, rows with \texttt{Last}=0 or empty, empty trading dates, an
+out-of-order event, and equal timestamps with different prices in one window. The test compares every window with an independent plain-loop
+implementation of the specification. Three injected bugs (a wrong comparison,
+keeping the first instead of the latest event, and letting the earlier line win
+a timestamp tie) all make it fail.
 
 \paragraph{Rounding.} The update $P\alpha + \mathit{EMA}_\mathit{prev}(1-\alpha)$
 is not exact in floating point. For a constant price of 50, EMA38 becomes
@@ -240,6 +289,48 @@ EMAs a hair apart after flat stretches: 260 strict signals (1.3\,\%) start from
 previous EMAs that differ only by rounding, which exact arithmetic would treat as
 equal. Writing the update as $\mathit{EMA}_\mathit{prev} + \alpha(P-\mathit{EMA}_\mathit{prev})$
 would be exact for constant prices; we did not re-run the job with it.
+
+\subsection{EMA starting value}\label{sec:emainit}
+The specification starts both EMAs at 0. We instead seed both with the symbol's
+first window price, which the instructor allows if the choice is explained. A
+\texttt{--ema-init zero} option gives the specification's start; a unit test
+checks it against a hand-computed example. Table~\ref{tab:emainit} compares the
+two on the full week (parallelism 8, literal rule; both modes see the same
+1,857,457 windows of 4,970 symbols).
+
+\begin{table}[t]
+\caption{EMA starting value, full week. Windows are numbered from 0 per symbol.
+$^*$Holds by construction: the seed equals the first price.}\label{tab:emainit}
+\small
+\begin{tabular}{lrr}
+\toprule
+ & First price (ours) & Zero (spec) \\
+\midrule
+Advisories (BUY / SELL)       & 24,836 (12,585 / 12,251) & 11,355 (7,772 / 3,583) \\
+\quad in window 0             & 0      & 4,970 \\
+\quad in windows 1--99        & 10,981 & 0 \\
+\quad from window 100         & 13,855 & 6,385 \\
+Windows until EMA38 within 1\,\% of $P$ (median) & 1$^*$ & 88 \\
+Symbols never within 1\,\%    & 0      & 1,523 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+With a zero start, EMA38 rises faster than EMA100, so in window~0 the previous
+EMAs are equal (both 0) and EMA38 is above EMA100: every symbol gets a BUY.
+While both EMAs ramp up, EMA38 stays above EMA100, and no symbol has an
+advisory in windows 1--99. EMA38 needs a median of 88 windows (about 7\,h of
+trading) to come within 1\,\% of the price, as $(37/39)^n \le 0.01$ predicts
+($n \approx 88$), and 1,523 symbols never get there within the week. The
+median is over the 3,447 symbols that do; the window price is recovered from
+the first-mode EMA38, which a spot check on PHIA.NL (516 windows) matches to a
+relative error below $2\cdot10^{-15}$. EMA100 should need about 230 windows by the
+same formula ($(99/101)^n \le 0.01$); we did not measure this. We chose the
+first-price seed because it has no ramp-up, does not emit a BUY at every
+symbol's first window, and gives meaningful EMAs for the 1,523 symbols that a
+zero start never brings close to their price. Its cost is the 4,847
+equal-start signals in window~1, which the strict rule removes
+(Section~\ref{sec:design}).
 
 \subsection{Scalability with parallelism}
 Table~\ref{tab:speedup} and Figure~\ref{fig:speedup} show runtime and speedup
@@ -444,21 +535,22 @@ possible and report throughput. With a 200\,h watermark tolerance, results
 appear only when the input ends, so per-event latency is not meaningful in this
 setup. A live deployment would use a tolerance of seconds to minutes and accept
 a small number of late events. Our side output makes that trade-off measurable.
-On the 4-day data at 4 workers, tolerances of 200\,h and 24\,h give no late
+On the full week at 8 workers, tolerances of 200\,h and 24\,h give no late
 events. Tolerances of 6\,h, 1\,h and 0.1\,h all give exactly 5,506 late
-events, the same in two runs. These are the 01:00 index rows of
+events, the same in two runs; this matches the number of 01:00 index rows of
 Section~\ref{sec:data}, which appear in the file about 18\,h after their event
-time; no other event is out of order by more than 6 minutes. Dropping them
-removes 1,812 windows and changes 656,482 of the 1,484,331 results (by more
-than $10^{-9}$), because the EMAs of most later windows of those indices shift.
+time. Dropping them removes 1,812 windows and changes 656,800 of the 1,857,457
+results (by more than $10^{-9}$), because the EMAs of most later windows of
+those indices shift.
 % TODO: update after the professor's answer on latency expectations.
 
-\paragraph{Interpretation choices.} The literal versus strict crossover rule
-changes the result count by 19.5\,\%, floating-point rounding moves another
-1--2\,\% (Section~\ref{sec:correct}), and the handling of empty windows and of
-rows without a trading date changes which windows exist at all. We report the
-literal rule as the main result and provide the others as options.
-% TODO: update after the professor's answers.
+\paragraph{Interpretation choices.} The crossover rule and the window price
+(latest timestamp, ties by input order) are fixed by the instructor; our main
+result uses them. The strict rule, which drops the 4,847 equal-start signals
+(19.5\,\%), is an extra analysis only, and floating-point rounding moves
+another 1--2\,\% of the signals (Section~\ref{sec:correct}). The handling of
+empty windows, of rows without a trading date and of late events remains our
+own assumption; the latter two change which windows exist at all.
 
 \paragraph{Single machine.} All measurements are from one laptop running
 Flink's mini-cluster, so the shuffle never crosses a network. On a cluster with

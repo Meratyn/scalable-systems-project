@@ -1,0 +1,3 @@
+variant,price_events,symbols,result_rows,buy,sell,signals,ETR_symbols,ETR_signals,FR_symbols,FR_signals,NL_symbols,NL_signals,runtime_s
+fallback,59391670,4970,1857457,12585,12251,24836,2126,8805,2285,12419,559,3612,
+drop,4912043,950,156903,1425,1464,2889,0,0,789,2309,161,580,49.5

@@ -95,8 +95,13 @@ public class Job {
 
     /**
      * Incremental reduce: keep only the event with the latest trading timestamp,
-     * so each (symbol, window) holds ONE event instead of all of them. On equal
-     * timestamps the later arrival wins.
+     * so each (symbol, window) holds ONE event instead of all of them.
+     *
+     * Tie rule: on equal timestamps the later event wins (b = the newer arrival). In file
+     * mode (--source file) this means the later line of the same file: one reader per
+     * file and FIFO channels keep the file's line order per key. Ties across files do not
+     * occur in the data (0 of 92,233 tied windows, see TieReport / logs/tie_report.txt).
+     * --source legacy (split files, several readers per file) is not covered by this rule.
      */
     public static class PickLatest implements ReduceFunction<Tuple4<String, String, Double, Long>> {
         @Override
@@ -111,7 +116,11 @@ public class Job {
     /**
      * Runs once per (symbol, window) when the window closes.
      *  - Close = the price event with the LATEST trading timestamp in the window.
-     *  - EMA is seeded with the first real price of a symbol (professor confirmed).
+     *  - zeroInit=false (default, --ema-init first): both EMAs are seeded with the first
+     *    price of a symbol, so its first window has no advisory (allowed by the
+     *    instructor if the choice is explained; see the report, "EMA starting value").
+     *    zeroInit=true (--ema-init zero): as in the spec, both previous EMAs start at 0; the
+     *    first window then applies the formula and the crossover rule like any other window.
      *  - Windows with no price event for a symbol are skipped (stated assumption).
      *  - strict=false: spec equations literally (previous EMAs may be equal).
      *    strict=true: a crossover needs the previous EMAs to differ.
@@ -125,11 +134,17 @@ public class Job {
         static final double ALPHA100 = 2.0 / (1 + 100);
 
         private final boolean strict;
+        private final boolean zeroInit;
         private transient ValueState<Double> ema38State;
         private transient ValueState<Double> ema100State;
 
         public EmaCrossoverFunction(boolean strict) {
+            this(strict, false);
+        }
+
+        public EmaCrossoverFunction(boolean strict, boolean zeroInit) {
             this.strict = strict;
+            this.zeroInit = zeroInit;
         }
 
         @Override
@@ -155,6 +170,10 @@ public class Job {
 
             Double prev38 = ema38State.value();
             Double prev100 = ema100State.value();
+            if (prev38 == null && zeroInit) {
+                prev38 = 0.0; // spec: EMA_prev = 0 before the first window
+                prev100 = 0.0;
+            }
 
             String advisory = "";
             double ema38;
@@ -199,6 +218,7 @@ public class Job {
         String sourceType = "file";
         String parser = "fast";
         String exchange = "ALL";
+        String emaInit = "first";
         for (int i = 0; i < argv.length; i++) {
             switch (argv[i]) {
                 case "--input": input = argv[++i]; break;
@@ -213,18 +233,24 @@ public class Job {
                 case "--source": sourceType = argv[++i]; break;
                 case "--parser": parser = argv[++i]; break;
                 case "--exchange": exchange = argv[++i].toUpperCase(); break;
+                case "--ema-init": emaInit = argv[++i].toLowerCase(); break;
                 default:
                     System.err.println("Unknown option: " + argv[i]);
                     System.err.println("Options: --input --output --parallelism --tolerance-hours "
-                            + "--strict-crossover --late-output --stage --object-reuse --require-trading-date --source file|legacy --parser fast|reference --exchange FR|NL|ETR|ALL");
+                            + "--strict-crossover --late-output --stage --object-reuse --require-trading-date --source file|legacy --parser fast|reference --exchange FR|NL|ETR|ALL --ema-init first|zero");
                     System.exit(2);
             }
+        }
+        if (!emaInit.equals("first") && !emaInit.equals("zero")) {
+            System.err.println("--ema-init must be first or zero, got: " + emaInit);
+            System.exit(2);
         }
         System.out.println("input=" + input + " output=" + output + " parallelism=" + parallelism
                 + " tolerance_h=" + toleranceHours + " strict=" + strict + " stage=" + stage
                 + " objectReuse=" + objectReuse
                 + " requireTradingDate=" + requireTradingDate
-                + " source=" + sourceType + " parser=" + parser + " exchange=" + exchange);
+                + " source=" + sourceType + " parser=" + parser + " exchange=" + exchange
+                + " emaInit=" + emaInit);
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(parallelism);
@@ -331,7 +357,7 @@ public class Job {
         }
 
         SingleOutputStreamOperator<Tuple5<String, Long, Double, Double, String>> result =
-                windowed.reduce(new PickLatest(), new EmaCrossoverFunction(strict));
+                windowed.reduce(new PickLatest(), new EmaCrossoverFunction(strict, emaInit.equals("zero")));
 
         result.map(new MapFunction<Tuple5<String, Long, Double, Double, String>, String>() {
             @Override

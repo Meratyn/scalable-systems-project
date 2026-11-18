@@ -43,6 +43,8 @@ import org.junit.jupiter.api.io.TempDir;
  *   FLAT.NL  constant price: EMAs stay exactly equal, no signal under either rule.
  *   ZERO.FR  odd windows contain only Last=0 / empty-Last rows: those windows must not exist.
  *   IDX.ETR  empty Trading date: event time must use the system date (a different day).
+ *   TIE.NL   equal trading timestamps with different prices in one window: the later line of the
+ *            file must win (documented tie rule), with an earlier-timestamp event written in between.
  * Plus comment/header lines and rows without Trading time, which must be ignored.
  */
 class JobCorrectnessTest {
@@ -120,6 +122,13 @@ class JobCorrectnessTest {
         return row(e.sym, sysDate, e.price, t.format(TIME), withTradingDate ? t.format(DATE) : "");
     }
 
+    static final int TIE_WINDOWS = 6;
+
+    /** Price of the last line at the latest timestamp of TIE.NL window w. */
+    static double tieWinner(int w) {
+        return 30 + 2 * w;
+    }
+
     static double oscPrice(int w) {
         if (w == 0) {
             return 100;
@@ -181,6 +190,22 @@ class JobCorrectnessTest {
             Ev e = new Ev("IDX.ETR", price(1000 + w), millis(DAY2) + w * WINDOW + 45_000);
             events.add(e);
             lines.add(priceRow(e, false, DAY2.format(DATE)));
+        }
+        // TIE.NL: per window, events at the same latest timestamp with different prices; the price of
+        // the LAST such line must be the window price. An earlier-timestamp event sits in between.
+        for (int w = 0; w < TIE_WINDOWS; w++) {
+            long start = millis(DAY1) + w * WINDOW;
+            List<Ev> evs = new ArrayList<>();
+            evs.add(new Ev("TIE.NL", price(20 + w), start + 200_000));
+            evs.add(new Ev("TIE.NL", price(99), start + 60_000));
+            if (w % 2 == 1) {
+                evs.add(new Ev("TIE.NL", price(40 + w), start + 200_000)); // three-way tie
+            }
+            evs.add(new Ev("TIE.NL", price(tieWinner(w)), start + 200_000));
+            for (Ev e : evs) {
+                events.add(e);
+                lines.add(priceRow(e, true, d1));
+            }
         }
         // Out-of-order event for OSC.FR window 10, written last: latest timestamp in its window.
         Ev late = new Ev("OSC.FR", price(95), millis(DAY1) + 10 * WINDOW + 290_000);
@@ -372,6 +397,28 @@ class JobCorrectnessTest {
         assertEquals(10, windows.size());
         for (long end : windows) {
             assertTrue(end > millis(DAY2) && end <= millis(DAY2) + 11 * WINDOW, "IDX.ETR window on the system date: " + end);
+        }
+    }
+
+    /**
+     * Documented tie rule: equal trading timestamps in one (symbol, window) -> the event on the later
+     * line of the file wins (one reader per file, FIFO channels), at parallelism 1 and 2.
+     */
+    @Test
+    void equalTimestampsTakeTheLaterLinesPrice() {
+        for (Map<String, Res> r : Arrays.asList(literalP1, literalP2)) {
+            double prev38 = 0;
+            double prev100 = 0;
+            for (int w = 0; w < TIE_WINDOWS; w++) {
+                double p = tieWinner(w);
+                double e38 = w == 0 ? p : p * A38 + prev38 * (1 - A38);
+                double e100 = w == 0 ? p : p * A100 + prev100 * (1 - A100);
+                Res a = r.get("TIE.NL," + (millis(DAY1) + (w + 1) * WINDOW));
+                assertEquals(e38, a.e38, 0.0, "TIE.NL window " + w + " EMA38 from the later line's price");
+                assertEquals(e100, a.e100, 0.0, "TIE.NL window " + w + " EMA100 from the later line's price");
+                prev38 = e38;
+                prev100 = e100;
+            }
         }
     }
 

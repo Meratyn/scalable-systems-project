@@ -1,0 +1,5 @@
+2026-11-18 16:54:03 start
+16:54:52 drop_full 49.527368923s
+16:58:32 fallback_symbolstats 219.423693585s
+17:00:42 drop_symbolstats 130.465371940s
+2026-11-18 17:00:46 done
