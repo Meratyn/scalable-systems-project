@@ -1,0 +1,1 @@
+python3 compare_runs.py output/p1 output/p8

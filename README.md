@@ -30,7 +30,7 @@ Smaller subsets used during development (also gitignored):
 
 ## Build
 
-```
+```sh
 ./build.sh
 ```
 
@@ -39,10 +39,16 @@ Flink in local mode, so no Flink cluster is needed).
 
 ## Run
 
-```
+```sh
 java -Xmx5g -XX:+UseParallelGC -jar java-job/target/ema-crossover-1.0.jar \
      --input data/raw --output output/x --parallelism 8
 ```
+For ease of execution, this command can also be found as a script:
+
+```sh
+./run.sh
+```
+
 
 ### Options
 
@@ -126,7 +132,7 @@ parallelism level.
 Compare two output folders. The script reports window counts, crossovers and any
 differing windows:
 
-```
+```sh
 python3 compare_runs.py output/p1 output/p8
 ```
 
@@ -138,9 +144,15 @@ Results must be IDENTICAL across parallelism levels.
 EMA charts per symbol with zoom, BUY/SELL markers, a literal/strict toggle, a day × hour heat map and
 the benchmark results. Generate its data from a results folder and the benchmark logs, then open the page:
 
-```
+```sh
 java -cp java-job/target/ema-crossover-1.0.jar ema.VizData output/w2_p8/results java-job/viz/data.js --top 150
 java -cp java-job/target/ema-crossover-1.0.jar ema.PerfData
+```
+
+For ease of execution, this command can also be found as a script:
+
+```sh
+./scripts/visualization.sh
 ```
 
 See `java-job/viz/README.md` for the options.
@@ -162,15 +174,27 @@ report, are in [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md).
 
 Key skew per worker (uses Flink's own key-group assignment):
 
-```
+```sh
 java -jar java-job/target/ema-crossover-1.0.jar --input data/raw --output output/stats --stage symbolstats
 java -cp java-job/target/ema-crossover-1.0.jar ema.SkewReport output/stats/symbolstats
 ```
+For ease of execution, this command can also be found as a script:
+
+```sh
+./scripts/key_skew.sh
+```
+
 
 Timestamp ties per (symbol, window) (single pass, ~4.5 min, 2.1 GB):
 
-```
+```sh
 java -Xmx3g -cp java-job/target/ema-crossover-1.0.jar ema.TieReport data/raw > logs/tie_report.txt
+```
+
+For ease of execution, this command can also be found as a script:
+
+```sh
+./scripts/timestamp_ties.sh
 ```
 
 Median runtime for the full week (3 runs, 12-thread laptop CPU):

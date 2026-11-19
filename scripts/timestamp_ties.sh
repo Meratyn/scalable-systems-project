@@ -1,0 +1,1 @@
+java -Xmx3g -cp java-job/target/ema-crossover-1.0.jar ema.TieReport data/raw > logs/tie_report.txt
