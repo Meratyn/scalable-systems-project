@@ -1,0 +1,13 @@
+variant,jar,tolerance_hours,rep,seconds,events_per_s,result_rows,results_logged,median_ms,p95_ms,p99_ms,max_ms
+probe_on,ema-latency-probe.jar,0.1,1,109.623523663,541778,1855645,1855645,40408.8,98022.1,101667.3,103310.4
+probe_off,ema-latency-probe.jar,0.1,1,108.923989700,545257,1855645,,,,,
+probe_on,ema-latency-probe.jar,6,1,109.781826568,540997,1855645,1855645,47179.4,90294.8,95679.4,97860.9
+probe_off,ema-latency-probe.jar,6,1,100.124243955,593179,1855645,,,,,
+default_old,ema-e3c5fe1.jar,200,1,99.159087736,598953,1857457,,,,,
+default_new,ema-latency-probe.jar,200,1,108.850063794,545628,1857457,,,,,
+probe_on,ema-latency-probe.jar,0.1,2,119.133702901,498529,1855645,1855645,38954.7,101270.1,106369.0,108420.0
+probe_off,ema-latency-probe.jar,0.1,2,111.234169385,533933,1855645,,,,,
+probe_on,ema-latency-probe.jar,6,2,105.644364949,562184,1855645,1855645,46029.6,88884.2,93885.4,95568.7
+probe_off,ema-latency-probe.jar,6,2,103.572063625,573433,1855645,,,,,
+default_old,ema-e3c5fe1.jar,200,2,115.065066652,516157,1857457,,,,,
+default_new,ema-latency-probe.jar,200,2,123.217675684,482006,1857457,,,,,

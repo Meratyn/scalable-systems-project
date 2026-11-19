@@ -1,5 +1,8 @@
 package ema;
 
+import java.io.BufferedWriter;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.time.Duration;
 
 import org.apache.flink.api.common.RuntimeExecutionMode;
@@ -54,10 +57,11 @@ public class Job {
         return Parser.parse(line, fallbackToSystemDate);
     }
 
-    public static class ParseFn implements FlatMapFunction<String, Tuple4<String, String, Double, Long>> {
+    public static class ParseFn implements FlatMapFunction<String, Tuple5<String, String, Double, Long, Long>> {
         private final boolean fallbackToSystemDate;
         private final boolean reference;
         private final boolean dropPlaceholderTime;
+        private final boolean stampArrival;
 
         public ParseFn(boolean fallbackToSystemDate) {
             this(fallbackToSystemDate, false);
@@ -70,24 +74,34 @@ public class Job {
 
         /** dropPlaceholderTime=true drops rows with an empty Trading date and Trading time 01:00:00.000. */
         public ParseFn(boolean fallbackToSystemDate, boolean reference, boolean dropPlaceholderTime) {
+            this(fallbackToSystemDate, reference, dropPlaceholderTime, false);
+        }
+
+        /**
+         * stampArrival=true (--latency-log): f4 = System.nanoTime() when the event is emitted by the
+         * parser; otherwise f4 = 0. Local mode runs all tasks in one JVM, so stamps are comparable.
+         */
+        public ParseFn(boolean fallbackToSystemDate, boolean reference, boolean dropPlaceholderTime,
+                       boolean stampArrival) {
             this.fallbackToSystemDate = fallbackToSystemDate;
             this.reference = reference;
             this.dropPlaceholderTime = dropPlaceholderTime;
+            this.stampArrival = stampArrival;
         }
 
         @Override
-        public void flatMap(String line, Collector<Tuple4<String, String, Double, Long>> out) {
+        public void flatMap(String line, Collector<Tuple5<String, String, Double, Long, Long>> out) {
             Tuple4<String, String, Double, Long> e = reference
                     ? Parser.parseReference(line, fallbackToSystemDate, dropPlaceholderTime)
                     : Parser.parse(line, fallbackToSystemDate, dropPlaceholderTime);
             if (e != null) {
-                out.collect(e);
+                out.collect(Tuple5.of(e.f0, e.f1, e.f2, e.f3, stampArrival ? System.nanoTime() : 0L));
             }
         }
     }
 
     /** Keeps only events of one exchange (the symbol suffix after the last dot, e.g. FR, NL, ETR). */
-    public static class ExchangeFilter implements FilterFunction<Tuple4<String, String, Double, Long>> {
+    public static class ExchangeFilter implements FilterFunction<Tuple5<String, String, Double, Long, Long>> {
         private final String exchange;
 
         public ExchangeFilter(String exchange) {
@@ -95,7 +109,7 @@ public class Job {
         }
 
         @Override
-        public boolean filter(Tuple4<String, String, Double, Long> e) {
+        public boolean filter(Tuple5<String, String, Double, Long, Long> e) {
             return exchange.equals(e.f1);
         }
     }
@@ -110,11 +124,14 @@ public class Job {
      * occur in the data (0 of 92,233 tied windows, see TieReport / logs/tie_report.txt).
      * --source legacy (split files, several readers per file) is not covered by this rule.
      */
-    public static class PickLatest implements ReduceFunction<Tuple4<String, String, Double, Long>> {
+    public static class PickLatest implements ReduceFunction<Tuple5<String, String, Double, Long, Long>> {
         @Override
-        public Tuple4<String, String, Double, Long> reduce(
-                Tuple4<String, String, Double, Long> a, Tuple4<String, String, Double, Long> b) {
-            return b.f3 >= a.f3 ? b : a;
+        public Tuple5<String, String, Double, Long, Long> reduce(
+                Tuple5<String, String, Double, Long, Long> a, Tuple5<String, String, Double, Long, Long> b) {
+            Tuple5<String, String, Double, Long, Long> w = b.f3 >= a.f3 ? b : a;
+            // f4 = arrival stamp of the LAST event that entered the window (0 when not measured)
+            w.f4 = Math.max(a.f4, b.f4);
+            return w;
         }
     }
 
@@ -135,7 +152,7 @@ public class Job {
      *    strict=true: a crossover needs the previous EMAs to differ.
      */
     public static class EmaCrossoverFunction extends ProcessWindowFunction<
-            Tuple4<String, String, Double, Long>,
+            Tuple5<String, String, Double, Long, Long>,
             Tuple5<String, Long, Double, Double, String>,
             String, TimeWindow> {
 
@@ -144,6 +161,8 @@ public class Job {
 
         private final boolean strict;
         private final boolean zeroInit;
+        private final String latencyLog; // null = off
+        private transient BufferedWriter latencyOut;
         private transient ValueState<Double> ema38State;
         private transient ValueState<Double> ema100State;
 
@@ -152,22 +171,43 @@ public class Job {
         }
 
         public EmaCrossoverFunction(boolean strict, boolean zeroInit) {
+            this(strict, zeroInit, null);
+        }
+
+        /** latencyLog != null: each subtask i writes "symbol,window_end_ms,latency_us" to latencyLog.i */
+        public EmaCrossoverFunction(boolean strict, boolean zeroInit, String latencyLog) {
             this.strict = strict;
             this.zeroInit = zeroInit;
+            this.latencyLog = latencyLog;
         }
 
         @Override
         public void open(Configuration parameters) {
             ema38State = getRuntimeContext().getState(new ValueStateDescriptor<>("ema38", Types.DOUBLE));
             ema100State = getRuntimeContext().getState(new ValueStateDescriptor<>("ema100", Types.DOUBLE));
+            if (latencyLog != null) {
+                try {
+                    latencyOut = new BufferedWriter(new FileWriter(
+                            latencyLog + "." + getRuntimeContext().getTaskInfo().getIndexOfThisSubtask()), 1 << 20);
+                } catch (IOException ex) {
+                    throw new RuntimeException("cannot open latency log " + latencyLog, ex);
+                }
+            }
+        }
+
+        @Override
+        public void close() throws Exception {
+            if (latencyOut != null) {
+                latencyOut.close();
+            }
         }
 
         @Override
         public void process(String key, Context context,
-                            Iterable<Tuple4<String, String, Double, Long>> elements,
+                            Iterable<Tuple5<String, String, Double, Long, Long>> elements,
                             Collector<Tuple5<String, Long, Double, Double, String>> out) throws Exception {
-            Tuple4<String, String, Double, Long> close = null;
-            for (Tuple4<String, String, Double, Long> e : elements) {
+            Tuple5<String, String, Double, Long, Long> close = null;
+            for (Tuple5<String, String, Double, Long, Long> e : elements) {
                 if (close == null || e.f3 >= close.f3) {
                     close = e;
                 }
@@ -205,6 +245,11 @@ public class Job {
             ema38State.update(ema38);
             ema100State.update(ema100);
             out.collect(Tuple5.of(key, context.window().getEnd(), ema38, ema100, advisory));
+            if (latencyOut != null) {
+                // processing-time delay: last event's parser emission -> this result handed downstream
+                long us = (System.nanoTime() - close.f4) / 1000;
+                latencyOut.write(key + "," + context.window().getEnd() + "," + us + "\n");
+            }
         }
     }
 
@@ -229,6 +274,7 @@ public class Job {
         String parser = "fast";
         String exchange = "ALL";
         String emaInit = "first";
+        String latencyLog = null;
         for (int i = 0; i < argv.length; i++) {
             switch (argv[i]) {
                 case "--input": input = argv[++i]; break;
@@ -245,10 +291,11 @@ public class Job {
                 case "--parser": parser = argv[++i]; break;
                 case "--exchange": exchange = argv[++i].toUpperCase(); break;
                 case "--ema-init": emaInit = argv[++i].toLowerCase(); break;
+                case "--latency-log": latencyLog = argv[++i]; break;
                 default:
                     System.err.println("Unknown option: " + argv[i]);
                     System.err.println("Options: --input --output --parallelism --tolerance-hours "
-                            + "--strict-crossover --late-output --stage --object-reuse --require-trading-date --drop-placeholder-time --source file|legacy --parser fast|reference --exchange FR|NL|ETR|ALL --ema-init first|zero");
+                            + "--strict-crossover --late-output --stage --object-reuse --require-trading-date --drop-placeholder-time --source file|legacy --parser fast|reference --exchange FR|NL|ETR|ALL --ema-init first|zero --latency-log <file>");
                     System.exit(2);
             }
         }
@@ -262,7 +309,7 @@ public class Job {
                 + " requireTradingDate=" + requireTradingDate
                 + " dropPlaceholderTime=" + dropPlaceholderTime
                 + " source=" + sourceType + " parser=" + parser + " exchange=" + exchange
-                + " emaInit=" + emaInit);
+                + " emaInit=" + emaInit + " latencyLog=" + latencyLog);
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(parallelism);
@@ -299,9 +346,10 @@ public class Job {
             return;
         }
 
-        SingleOutputStreamOperator<Tuple4<String, String, Double, Long>> events =
-                rawLines.flatMap(new ParseFn(!requireTradingDate, parser.equals("reference"), dropPlaceholderTime))
-                        .returns(Types.TUPLE(Types.STRING, Types.STRING, Types.DOUBLE, Types.LONG));
+        SingleOutputStreamOperator<Tuple5<String, String, Double, Long, Long>> events =
+                rawLines.flatMap(new ParseFn(!requireTradingDate, parser.equals("reference"), dropPlaceholderTime,
+                                latencyLog != null))
+                        .returns(Types.TUPLE(Types.STRING, Types.STRING, Types.DOUBLE, Types.LONG, Types.LONG));
         if (!exchange.equals("ALL")) {
             // Per-exchange experiments: all files are still read and parsed; only the events
             // of one exchange go on to the keyed window stage. Default ALL adds no operator.
@@ -311,9 +359,9 @@ public class Job {
         if (stage.equals("symbolstats")) {
             // Price events per symbol -> <output>/symbolstats (symbol,count). Used for
             // long-tail and key-skew analysis (see SkewReport).
-            events.map(new MapFunction<Tuple4<String, String, Double, Long>, Tuple2<String, Long>>() {
+            events.map(new MapFunction<Tuple5<String, String, Double, Long, Long>, Tuple2<String, Long>>() {
                         @Override
-                        public Tuple2<String, Long> map(Tuple4<String, String, Double, Long> e) {
+                        public Tuple2<String, Long> map(Tuple5<String, String, Double, Long, Long> e) {
                             return Tuple2.of(e.f0, 1L);
                         }
                     })
@@ -337,39 +385,39 @@ public class Job {
         }
 
         if (stage.equals("parse")) {
-            events.addSink(new DiscardingSink<Tuple4<String, String, Double, Long>>());
+            events.addSink(new DiscardingSink<Tuple5<String, String, Double, Long, Long>>());
             env.execute("stage-parse");
             return;
         }
 
         // Tolerance larger than the dataset (default 200h): no event is ever late,
         // so results do not depend on file read order or parallelism.
-        DataStream<Tuple4<String, String, Double, Long>> watermarked = events.assignTimestampsAndWatermarks(
+        DataStream<Tuple5<String, String, Double, Long, Long>> watermarked = events.assignTimestampsAndWatermarks(
                 WatermarkStrategy
-                        .<Tuple4<String, String, Double, Long>>forBoundedOutOfOrderness(
+                        .<Tuple5<String, String, Double, Long, Long>>forBoundedOutOfOrderness(
                                 Duration.ofSeconds((long) (toleranceHours * 3600)))
                         .withTimestampAssigner(
-                                (SerializableTimestampAssigner<Tuple4<String, String, Double, Long>>)
+                                (SerializableTimestampAssigner<Tuple5<String, String, Double, Long, Long>>)
                                         (e, ts) -> e.f3));
 
-        WindowedStream<Tuple4<String, String, Double, Long>, String, TimeWindow> windowed = watermarked
-                .keyBy(new KeySelector<Tuple4<String, String, Double, Long>, String>() {
+        WindowedStream<Tuple5<String, String, Double, Long, Long>, String, TimeWindow> windowed = watermarked
+                .keyBy(new KeySelector<Tuple5<String, String, Double, Long, Long>, String>() {
                     @Override
-                    public String getKey(Tuple4<String, String, Double, Long> e) {
+                    public String getKey(Tuple5<String, String, Double, Long, Long> e) {
                         return e.f0;
                     }
                 })
                 .window(TumblingEventTimeWindows.of(Time.minutes(5)));
 
-        OutputTag<Tuple4<String, String, Double, Long>> lateTag = null;
+        OutputTag<Tuple5<String, String, Double, Long, Long>> lateTag = null;
         if (lateOutput) {
-            lateTag = new OutputTag<Tuple4<String, String, Double, Long>>("late-events",
-                    Types.TUPLE(Types.STRING, Types.STRING, Types.DOUBLE, Types.LONG)) { };
+            lateTag = new OutputTag<Tuple5<String, String, Double, Long, Long>>("late-events",
+                    Types.TUPLE(Types.STRING, Types.STRING, Types.DOUBLE, Types.LONG, Types.LONG)) { };
             windowed = windowed.sideOutputLateData(lateTag);
         }
 
         SingleOutputStreamOperator<Tuple5<String, Long, Double, Double, String>> result =
-                windowed.reduce(new PickLatest(), new EmaCrossoverFunction(strict, emaInit.equals("zero")));
+                windowed.reduce(new PickLatest(), new EmaCrossoverFunction(strict, emaInit.equals("zero"), latencyLog));
 
         result.map(new MapFunction<Tuple5<String, Long, Double, Double, String>, String>() {
             @Override
@@ -380,9 +428,9 @@ public class Job {
 
         if (lateTag != null) {
             result.getSideOutput(lateTag).map(
-                    new MapFunction<Tuple4<String, String, Double, Long>, String>() {
+                    new MapFunction<Tuple5<String, String, Double, Long, Long>, String>() {
                         @Override
-                        public String map(Tuple4<String, String, Double, Long> e) {
+                        public String map(Tuple5<String, String, Double, Long, Long> e) {
                             return e.f0 + "," + e.f3 + "," + e.f2;
                         }
                     }).sinkTo(csvSink(output + "/late"));

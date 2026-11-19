@@ -1,0 +1,20 @@
+2026-11-18 19:21:04 start
+19:22:56 probe_on tol=0.1 rep=1 109.623523663s rows=1855645 stats=1855645,40408.8,98022.1,101667.3,103310.4
+19:24:45 probe_off tol=0.1 rep=1 108.923989700s rows=1855645 stats=,,,,
+19:26:37 probe_on tol=6 rep=1 109.781826568s rows=1855645 stats=1855645,47179.4,90294.8,95679.4,97860.9
+19:28:17 probe_off tol=6 rep=1 100.124243955s rows=1855645 stats=,,,,
+19:29:56 default_old tol=200 rep=1 99.159087736s rows=1857457 stats=,,,,
+19:31:45 default_new tol=200 rep=1 108.850063794s rows=1857457 stats=,,,,
+19:33:46 probe_on tol=0.1 rep=2 119.133702901s rows=1855645 stats=1855645,38954.7,101270.1,106369.0,108420.0
+19:35:38 probe_off tol=0.1 rep=2 111.234169385s rows=1855645 stats=,,,,
+19:37:25 probe_on tol=6 rep=2 105.644364949s rows=1855645 stats=1855645,46029.6,88884.2,93885.4,95568.7
+19:39:09 probe_off tol=6 rep=2 103.572063625s rows=1855645 stats=,,,,
+19:41:04 default_old tol=200 rep=2 115.065066652s rows=1857457 stats=,,,,
+19:43:07 default_new tol=200 rep=2 123.217675684s rows=1857457 stats=,,,,
+== probe_on vs probe_off, tol=0.1
+IDENTICAL
+== probe_on vs probe_off, tol=6
+IDENTICAL
+pooled tol=0.1: results,median_ms,p95_ms,p99_ms,max_ms = 3711290,39879.1,98850.9,105567.8,108420.0
+pooled tol=6: results,median_ms,p95_ms,p99_ms,max_ms = 3711290,46624.2,89262.0,94845.3,97860.9
+2026-11-18 19:43:55 done
