@@ -1,0 +1,18 @@
+output/w2_p8: 1857457 rows, 24836 advisories
+output/w2_p8_noplaceholder: 1855645 rows, 24800 advisories
+windows only in ref: 1812, only in run: 0; symbols that lost windows: 1812
+(a) rows in both with a different advisory: 1789 (BUY<->SELL 0, only in ref 886, only in run 903)
+    advisories in windows only in ref: 53, only in run: 0
+      ('A12LE.NL', 1636622400000): ref '' run 'SELL'
+      ('A12LE.NL', 1636622700000): ref 'SELL' run ''
+      ('AAX.NL', 1636536900000): ref '' run 'BUY'
+      ('AAX.NL', 1636539000000): ref '' run 'SELL'
+      ('AAXG.NL', 1636536900000): ref '' run 'BUY'
+      ('AAXG.NL', 1636539000000): ref '' run 'SELL'
+      ('AAXG.NL', 1636629600000): ref 'BUY' run ''
+      ('AAXG.NL', 1636629900000): ref '' run 'BUY'
+      ('AAXG.NL', 1636631400000): ref 'BUY' run ''
+      ('AAXG.NL', 1636631700000): ref '' run 'BUY'
+(b) differing rows: 656800; of symbols that lost windows: 656800; other symbols: 0
+(c) symbols without lost windows: max relative difference EMA38 0.000e+00, EMA100 0.000e+00
+    symbols that lost windows: max relative difference EMA38 1.553e-02, EMA100 7.403e-03

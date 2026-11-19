@@ -1,0 +1,14 @@
+reason,lines,share_of_all_lines
+comment_or_header,91,0.0000
+short_row,0,0.0000
+empty_last,229408756,79.3481
+empty_trading_time,0,0.0000
+empty_date,0,0.0000
+bad_last,0,0.0000
+zero_last,316382,0.1094
+bad_timestamp,0,0.0000
+price_event,59391670,20.5424
+total,289116899,100.0000
+price_event_with_empty_trading_date,54479627,18.8435
+price_event_placeholder_0100,5506,0.0019
+check_parser_events,59391670,MATCH

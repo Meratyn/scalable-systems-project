@@ -1,0 +1,24 @@
+p1 rc=0 144.209866981s
+p2 rc=0 127.444278238s
+p4 rc=0 110.072597015s
+== w2_p8 vs w2_p1
+output/w2_p8: 1857457 windows, 24836 crossovers, 0 late events
+output/w2_p1: 1857457 windows, 24836 crossovers, 0 late events
+windows only in output/w2_p8: 0
+windows only in output/w2_p1: 0
+windows in both with different values: 0
+IDENTICAL
+== w2_p8 vs w2_p2
+output/w2_p8: 1857457 windows, 24836 crossovers, 0 late events
+output/w2_p2: 1857457 windows, 24836 crossovers, 0 late events
+windows only in output/w2_p8: 0
+windows only in output/w2_p2: 0
+windows in both with different values: 0
+IDENTICAL
+== w2_p8 vs w2_p4
+output/w2_p8: 1857457 windows, 24836 crossovers, 0 late events
+output/w2_p4: 1857457 windows, 24836 crossovers, 0 late events
+windows only in output/w2_p8: 0
+windows only in output/w2_p4: 0
+windows in both with different values: 0
+IDENTICAL

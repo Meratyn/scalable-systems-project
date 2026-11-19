@@ -1,0 +1,7 @@
+placeholder rows excluded: 5506
+exchange,symbols,symbols_with_backward_step,pairs_compared,backward_steps,backward_steps_over_6min,max_backward_s,max_at
+ETR,2126,0,31985543,0,0,0.000,
+FR,2285,0,21352016,0,0,0.000,
+NL,559,0,6024388,0,0,0.000,
+ALL,4970,0,59361947,0,0,0.000,
+seconds=133.8
