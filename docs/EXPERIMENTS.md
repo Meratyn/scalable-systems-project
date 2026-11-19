@@ -10,6 +10,15 @@ events), parallelism 8, literal crossover rule, first-price EMA seed, 200 h
 watermark tolerance, `-Xmx5g -XX:+UseParallelGC`, one laptop (see the report's
 Setup paragraph).
 
+## 0. Baseline and ablation notes
+
+An earlier PyFlink prototype of the same logic needed about 85 minutes for four
+days of data; the Java port is more than 30× faster. The Java single-worker run
+is the baseline for all measurements.
+
+Ablation (table in the report): Parallel GC is 16 % faster than G1 and uses
+1.7× less memory, because G1 grows the heap more eagerly.
+
 ## 1. Data cleaning
 
 ### 1.1 Why input lines are dropped
