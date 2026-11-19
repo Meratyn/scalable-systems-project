@@ -275,6 +275,7 @@ public class Job {
         String exchange = "ALL";
         String emaInit = "first";
         String latencyLog = null;
+        double replaySpeed = 0; // 0 = off (read as fast as possible)
         for (int i = 0; i < argv.length; i++) {
             switch (argv[i]) {
                 case "--input": input = argv[++i]; break;
@@ -292,10 +293,11 @@ public class Job {
                 case "--exchange": exchange = argv[++i].toUpperCase(); break;
                 case "--ema-init": emaInit = argv[++i].toLowerCase(); break;
                 case "--latency-log": latencyLog = argv[++i]; break;
+                case "--replay-speed": replaySpeed = Double.parseDouble(argv[++i]); break;
                 default:
                     System.err.println("Unknown option: " + argv[i]);
                     System.err.println("Options: --input --output --parallelism --tolerance-hours "
-                            + "--strict-crossover --late-output --stage --object-reuse --require-trading-date --drop-placeholder-time --source file|legacy --parser fast|reference --exchange FR|NL|ETR|ALL --ema-init first|zero --latency-log <file>");
+                            + "--strict-crossover --late-output --stage --object-reuse --require-trading-date --drop-placeholder-time --source file|legacy --parser fast|reference --exchange FR|NL|ETR|ALL --ema-init first|zero --latency-log <file> --replay-speed S");
                     System.exit(2);
             }
         }
@@ -309,7 +311,8 @@ public class Job {
                 + " requireTradingDate=" + requireTradingDate
                 + " dropPlaceholderTime=" + dropPlaceholderTime
                 + " source=" + sourceType + " parser=" + parser + " exchange=" + exchange
-                + " emaInit=" + emaInit + " latencyLog=" + latencyLog);
+                + " emaInit=" + emaInit + " latencyLog=" + latencyLog
+                + " replaySpeed=" + replaySpeed);
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(parallelism);
@@ -350,6 +353,12 @@ public class Job {
                 rawLines.flatMap(new ParseFn(!requireTradingDate, parser.equals("reference"), dropPlaceholderTime,
                                 latencyLog != null))
                         .returns(Types.TUPLE(Types.STRING, Types.STRING, Types.DOUBLE, Types.LONG, Types.LONG));
+        if (replaySpeed > 0) {
+            // Paced replay: chained to the parser (same parallelism, forward), so one Pacer per
+            // reader. Before the watermark assigner, so watermarks advance with the paced events.
+            events = events.map(new Pacer(replaySpeed, latencyLog != null))
+                    .returns(Types.TUPLE(Types.STRING, Types.STRING, Types.DOUBLE, Types.LONG, Types.LONG));
+        }
         if (!exchange.equals("ALL")) {
             // Per-exchange experiments: all files are still read and parsed; only the events
             // of one exchange go on to the keyed window stage. Default ALL adds no operator.
