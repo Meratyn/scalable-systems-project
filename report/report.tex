@@ -281,8 +281,16 @@ symbol's second window, right after seeding. As an extra analysis of these
 4,847 equal-start signals (19.5\,\%), a \texttt{--strict-crossover} option
 requires a strict previous inequality; it yields 19,989.
 
-\paragraph{Watermarks and determinism.} Event times inside a file are not in
-order: old trades are re-reported, and the files are read concurrently. We use
+\paragraph{Watermarks and determinism.} Within a file, event times are nearly
+in order: no price row is more than 64.8\,s behind the latest event time seen
+before it in its file. 99.9\,\% are at most 0.40\,s behind; only 5,442 of
+59.4M rows (0.009\,\%) lag by more than 1\,s, 11 by more than 1 minute and
+none by more than 6 minutes (\texttt{DisorderReport}). The exception is the
+5,506 placeholder rows, about 18\,h behind (Section~\ref{sec:cleaning}).
+Watermarks are generated per reader, and at 8 workers each file has its own
+reader, so a tolerance of about 65\,s would have made no row late except the
+placeholder rows (derived from these lags, not run). Across files, event times
+interleave, since the files are read concurrently. We use
 a bounded-out-of-orderness watermark with a tolerance of 200\,h, which is
 longer than the dataset, so no event is ever late and all windows fire at the
 end of input. Together with the deterministic latest-event rule, this makes the
