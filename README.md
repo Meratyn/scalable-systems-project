@@ -146,6 +146,9 @@ See `java-job/viz/README.md` for the options.
 
 ## Experiments
 
+All measurements, with the tables and longer explanations that do not fit the
+report, are in [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md).
+
 | Script | What it measures | Output |
 |---|---|---|
 | `benchmark.sh` | runtime at parallelism 1/2/4/8, 4 and 7 days, 3 runs | `logs/bench_times.csv` (summarise with `python3 bench_summary.py logs/bench_times.csv`) |

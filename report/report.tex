@@ -45,7 +45,8 @@ crossovers in 57\,s with 8 workers on a laptop, and the output is identical at
 every parallelism level. The speedup levels off at about 1.9$\times$. Key skew
 would allow about 7$\times$; the actual limit is the input: Flink's file source
 reads each day-file with one reader, and the largest file alone takes about
-30\,s.
+30\,s. In a paced replay, the pipeline adds about 0.15\,s to the 6--11\,s
+that the window size and watermark tolerance impose.
 \end{abstract}
 
 \maketitle
@@ -66,10 +67,9 @@ Frankfurt/Xetra (ETR) exchanges.
   breakout) and a \emph{sell} advisory when it moves below (a bearish breakdown).
 \end{description}
 
-We built the job in Java on Apache Flink~\cite{flink}. An earlier PyFlink
-prototype of the same logic needed about 85 minutes for four days of data;
-the Java port is more than 30$\times$ faster. Its single-worker run is the
-baseline for all measurements below. Our contributions are (i) a deterministic
+We built the job in Java on Apache Flink~\cite{flink}; it is more than
+30$\times$ faster than our earlier PyFlink prototype, and its single-worker run
+is the baseline below. Our contributions are (i) a deterministic
 event-time pipeline whose output does not depend on parallelism, (ii) a careful
 treatment of which rows count as price events, and (iii) a scalability study
 that separates the effects of input reading, parsing, key skew and JVM
@@ -111,43 +111,29 @@ CET (UTC+1) in November 2021. The specification mentions CEST, but that is the
 summer offset. We treat the wall-clock times as instants and never convert them,
 so the offset changes no window or result. One quirk: on 10 November, 5,506
 index rows for 1,812 FR/NL indices were published at 18:56 with an empty
-\texttt{Trading date} and a placeholder \texttt{Trading time} of 01:00:00.000.
-The system-date fallback places them at 01:00 that morning, which creates one
-window per index outside trading hours with 53 advisories under the literal
-rule (51 under the strict rule). We keep them as the data defines them.
+\texttt{Trading date} and a placeholder \texttt{Trading time} of 01:00:00.000;
+the fallback places them at 01:00 that morning (Section~\ref{sec:cleaning}).
 
 \paragraph{Rules confirmed by the instructor.} The crossover rule is the
 literal one of Equations (1)--(4), including equality in the previous window
 (Section~\ref{sec:design}). The window's price $P$ is the price event with the
-latest trading timestamp in the window. On equal timestamps the event that
-comes later in input order wins (files by name, i.e.\ by day, then line). Ties
-are common: in 92,233 of the 1,857,457 (symbol, window) groups (5.0\,\%) the
-latest timestamp is shared by two or more events, and in 23,320 (1.26\,\%)
-those events have different prices (ETR 10,051, FR 10,995, NL 2,274). All of
-these ties lie within a single file. Our file source reads each file with one
-reader and Flink's channels keep the order, so the later line always wins at
-every parallelism; a unit test checks this. Both EMAs of a symbol are seeded
-with its first price instead of the specification's 0, so the first window has
-no advisory; this is allowed by the instructor if the choice is explained.
-As discussed with the instructor, either passing the EMA state forward or
-dropping it is acceptable; we emit no result for a window without events and
-let the EMAs continue from their last values.
-
-\paragraph{Our assumptions.} These are our own choices; we discuss them in
-Section~\ref{sec:discussion}.
-\begin{itemize}
-\item A row with an empty \texttt{Trading date} takes the system date; the
-  instructor also allows dropping it, and we report both variants
-  (Table~\ref{tab:datevar}).
-\item No event is late: the watermark tolerance (200\,h) exceeds the dataset,
-  so out-of-order events still count (Section~\ref{sec:design}).
-\end{itemize}
+latest trading timestamp; on equal timestamps the later line in input order
+wins (files by name, i.e.\ by day, then line). Such ties occur in 5.0\,\% of
+the (symbol, window) groups, with different prices in 1.26\,\%. All lie within
+one file, which one reader reads in order, so the later line wins at every
+parallelism (unit-tested). Both EMAs are seeded with the symbol's first price
+instead of 0, so the first window has no advisory
+(Section~\ref{sec:emainit}). A window without events emits nothing and the
+EMAs continue from their last values; the instructor accepts either choice.
 
 \subsection{Data cleaning}\label{sec:cleaning}
 All cleaning happens inside the streaming pipeline, in the parser stage that
 turns each CSV line into a price event (Section~\ref{sec:design}); there is no
-separate pre-pass over the files. Table~\ref{tab:drop} counts every input line
-under the first rule it fails, in the parser's order.
+separate pre-pass. Table~\ref{tab:drop} counts every input line under the first
+rule it fails. Rows with an empty or zero \texttt{Last} carry no trade price;
+most hold only the symbol and system time, the rest a quote or a volume. Each
+file starts with 13 lines of metadata (a licence comment, the column header and
+a column description), which the parser skips.
 
 \begin{table}[t]
 \caption{Why input lines are dropped (full week). Each line is counted once,
@@ -169,65 +155,23 @@ Total                                     & 289,116,899 & 100\,\% \\
 \end{tabular}
 \end{table}
 
-\paragraph{Rows without a price.} Only 20.5\,\% of the lines are price
-events. Rows with an empty or zero \texttt{Last} contain no trade price
-(79.35\,\% and 0.11\,\% of all lines) and are dropped. In a sample (the first
-two million lines of one file), 64\,\% of the rows with an empty \texttt{Last}
-carry only the symbol and system time; the others also carry a bid or ask
-quote or a total volume. Each file starts with 13 non-data lines (an 11-line
-licence comment, the column header and a column description), 91 in total.
+\paragraph{Rows without a trading date.} Dropping them
+(\texttt{--require-trading-date}), which the instructor allows, would remove
+the 91.7\,\% of price events noted above and 88.4\,\% of the advisories; we
+report the system-date fallback as the main result.
 
-\paragraph{Rows without a trading date.} The instructor allows rows with an
-empty \texttt{Trading date} to be ignored. We ran both variants on the full
-week (parallelism 8, literal rule; Table~\ref{tab:datevar}). Our main run uses
-the system-date fallback; the instructor-aligned variant
-(\texttt{--require-trading-date}) drops these rows. Dropping them removes
-91.7\,\% of the price events (54.5M of 59.4M), 91.6\,\% of the result rows
-(1,700,554 of 1,857,457), 80.9\,\% of the symbols (4,020 of 4,970) and
-88.4\,\% of the signals (21,947 of 24,836). ETR disappears completely, since
-no Frankfurt row has a trading date; FR keeps 789 of its 2,285 symbols and NL
-161 of 559. We report the fallback as the main result and the drop variant
-for comparison.
+\paragraph{Placeholder rows.} The instructor pointed out the 5,506 placeholder
+rows (Section~\ref{sec:data}) as an example of dirty real-world data. The main
+run keeps them; \texttt{--drop-placeholder-time} drops exactly these rows.
+Without them the week gives 24,800 advisories instead of 24,836; only the
+1,812 affected indices change, and every other symbol is bit-identical.
 
-\begin{table}[t]
-\caption{Trading-date variants (full week, parallelism 8, literal rule).
-Fallback = main run; drop = \texttt{--require-trading-date}. ``Dropped'' is
-(fallback $-$ drop) / fallback for the quantity in that row.}\label{tab:datevar}
-\small
-\begin{tabular}{lrrr}
-\toprule
- & Fallback & Drop & Dropped \\
-\midrule
-Price events       & 59,391,670 & 4,912,043 & 91.7\,\% \\
-Result rows        &  1,857,457 &   156,903 & 91.6\,\% \\
-Symbols            &      4,970 &       950 & 80.9\,\% \\
-\quad ETR / FR / NL & 2,126 / 2,285 / 559 & 0 / 789 / 161 & \\
-Signals (BUY+SELL) &     24,836 &     2,889 & 88.4\,\% \\
-\quad BUY / SELL    & 12,585 / 12,251 & 1,425 / 1,464 & \\
-\quad ETR / FR / NL & 8,805 / 12,419 / 3,612 & 0 / 2,309 / 580 & \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\paragraph{Placeholder rows.} The 5,506 index rows of 1,812 FR/NL indices in
-the 10 November file with an empty \texttt{Trading date} and the placeholder
-\texttt{Trading time} 01:00:00.000 (Section~\ref{sec:data}) were pointed out by
-the instructor as an example of dirty real-world data. The main run keeps them
-as the data defines them; the option \texttt{--drop-placeholder-time} drops
-exactly these rows (empty \texttt{Trading date} and \texttt{Trading time}
-01:00:00.000, nothing else). Without them the full week gives 24,800
-advisories instead of 24,836: the dropped windows held 53, and in later
-windows of the 1,812 indices 886 disappear and 903 appear (none flips between
-BUY and SELL). Every other symbol is bit-identical. The result equals that of
-the 0.1\,h-tolerance run, in which the same rows arrive late
-(Section~\ref{sec:discussion}).
-
-\paragraph{Order within a symbol.} Apart from the 5,506 placeholder rows, the
-price rows of every symbol appear in non-decreasing event-time order within
-each file: of the 59,361,947 consecutive pairs of price rows of the same symbol
-in the same file, none steps backward (\texttt{OrderReport}). This is why the
-placeholder rows are the only late events at every tolerance we tested
-(Section~\ref{sec:discussion}).
+\paragraph{Order within a symbol.} Apart from the placeholder rows, the price
+rows of every symbol are in non-decreasing event-time order within each file:
+none of the 59,361,947 consecutive same-symbol pairs steps backward
+(\texttt{OrderReport}). The trading-date variants, the effect of the
+placeholder rows and per-file order statistics are in
+\texttt{docs/EXPERIMENTS.md} in the repository (Section~1).
 
 \section{System Design}\label{sec:design}
 Figure~\ref{fig:pipeline} shows the dataflow.
@@ -257,8 +201,9 @@ Everything after \texttt{keyBy(symbol)} runs per key.}\label{fig:pipeline}
 \end{figure}
 
 \paragraph{Source and parsing.} Flink's \texttt{FileSource} reads the CSV
-files line by line. A chained flat-map parses each line into
-(symbol, exchange, price, timestamp) and drops non-price rows. Since only
+files line by line. A chained flat-map parses each line and
+normalises it to (symbol, exchange from the symbol suffix, price, event time in
+epoch milliseconds), dropping non-price rows. Since only
 20\,\% of lines are price events, filtering before the shuffle removes most
 of the network traffic.
 
@@ -333,67 +278,30 @@ week. Results are compared key by key with \texttt{compare\_runs.py}: outputs at
 parallelism 1, 2, 4 and 8, with both source implementations, with both parsers,
 and with the input split into 8 chunks per day are all identical. On a
 20-minute slice we checked the EMA values against an independent PyFlink
-implementation of the same formulas. A JUnit test (10 cases, 6\,s) runs the job
-in-process at parallelism 1 and 2 with both crossover rules on a synthetic file.
-The file contains real BUY and SELL crossings, an equal-start signal, a constant
-price, rows with \texttt{Last}=0 or empty, empty trading dates, an
-out-of-order event, and equal timestamps with different prices in one window. The test compares every window with an independent plain-loop
-implementation of the specification. Three injected bugs (a wrong comparison,
-keeping the first instead of the latest event, and letting the earlier line win
-a timestamp tie) all make it fail.
+implementation of the same formulas. A JUnit test (10 cases) runs the job
+in-process at parallelism 1 and 2 with both crossover rules on a synthetic
+file with real BUY and SELL crossings, an equal-start signal, a constant price,
+rows without a price or trading date, an out-of-order event and timestamp ties
+with different prices, and compares every window with an independent
+plain-loop implementation of the specification. Three injected bugs (a wrong
+comparison, keeping the first event, letting the earlier line win a tie) all
+make it fail.
 
 \paragraph{Rounding.} The update $P\alpha + \mathit{EMA}_\mathit{prev}(1-\alpha)$
-is not exact in floating point. For a constant price of 50, EMA38 becomes
+is not exact in floating point: for a constant price of 50, EMA38 becomes
 49.999999999999986 while EMA100 stays 50, so the literal rule can fire on a
-difference of $10^{-15}$. In the full week, 594 literal signals (2.4\,\%) have an
-EMA gap below $10^{-12}$ of the price and an unchanged window price. All of them
-are equal-start signals, so the strict rule removes them. Rounding also leaves
-EMAs a hair apart after flat stretches: 260 strict signals (1.3\,\%) start from
-previous EMAs that differ only by rounding, which exact arithmetic would treat as
-equal. Writing the update as $\mathit{EMA}_\mathit{prev} + \alpha(P-\mathit{EMA}_\mathit{prev})$
-would be exact for constant prices; we did not re-run the job with it.
+difference of $10^{-15}$. In the full week, 594 literal signals (2.4\,\%) are of
+this kind (all equal-start signals, which the strict rule removes), and 260
+strict signals (1.3\,\%) start from EMAs that differ only by rounding. The form
+$\mathit{EMA}_\mathit{prev} + \alpha(P-\mathit{EMA}_\mathit{prev})$ would be
+exact for constant prices; we did not re-run the job with it.
 
-\subsection{EMA starting value}\label{sec:emainit}
-The specification starts both EMAs at 0. We instead seed both with the symbol's
-first window price, which the instructor allows if the choice is explained. A
-\texttt{--ema-init zero} option gives the specification's start; a unit test
-checks it against a hand-computed example. Table~\ref{tab:emainit} compares the
-two on the full week (parallelism 8, literal rule; both modes see the same
-1,857,457 windows of 4,970 symbols).
-
-\begin{table}[t]
-\caption{EMA starting value, full week. Windows are numbered from 0 per symbol.
-$^*$Holds by construction: the seed equals the first price.}\label{tab:emainit}
-\small
-\begin{tabular}{lrr}
-\toprule
- & First price (ours) & Zero (spec) \\
-\midrule
-Advisories (BUY / SELL)       & 24,836 (12,585 / 12,251) & 11,355 (7,772 / 3,583) \\
-\quad in window 0             & 0      & 4,970 \\
-\quad in windows 1--99        & 10,981 & 0 \\
-\quad from window 100         & 13,855 & 6,385 \\
-Windows until EMA38 within 1\,\% of $P$ (median) & 1$^*$ & 88 \\
-Symbols never within 1\,\%    & 0      & 1,523 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-With a zero start, EMA38 rises faster than EMA100, so in window~0 the previous
-EMAs are equal (both 0) and EMA38 is above EMA100: every symbol gets a BUY.
-While both EMAs ramp up, EMA38 stays above EMA100, and no symbol has an
-advisory in windows 1--99. EMA38 needs a median of 88 windows (about 7\,h of
-trading) to come within 1\,\% of the price, as $(37/39)^n \le 0.01$ predicts
-($n \approx 88$), and 1,523 symbols never get there within the week. The
-median is over the 3,447 symbols that do; the window price is recovered from
-the first-mode EMA38, which a spot check on PHIA.NL (516 windows) matches to a
-relative error below $2\cdot10^{-15}$. EMA100 should need about 230 windows by the
-same formula ($(99/101)^n \le 0.01$); we did not measure this. We chose the
-first-price seed because it has no ramp-up, does not emit a BUY at every
-symbol's first window, and gives meaningful EMAs for the 1,523 symbols that a
-zero start never brings close to their price. Its cost is the 4,847
-equal-start signals in window~1, which the strict rule removes
-(Section~\ref{sec:design}).
+\paragraph{EMA starting value.}\label{sec:emainit} With the specification's
+zero start (\texttt{--ema-init zero}), every symbol gets a BUY in its first
+window, none has an advisory in windows 1--99 while the EMAs ramp up, and EMA38
+needs a median of 88 windows (about 7\,h) to come within 1\,\% of the price;
+1,523 symbols never do. It gives 11,355 advisories against our 24,836
+(\texttt{docs/EXPERIMENTS.md}, Section~2).
 
 \subsection{Scalability with parallelism}
 Table~\ref{tab:speedup} and Figure~\ref{fig:speedup} show runtime and speedup
@@ -420,6 +328,7 @@ Workers & Time (s) & Speedup & Time (s) & Speedup \\
 \centering
 \begin{tikzpicture}
 \begin{axis}[
+  height=0.5\columnwidth,
   xmode=log, log basis x=2, xtick={1,2,4,8}, xticklabels={1,2,4,8},
   xlabel={Workers (parallelism)}, ylabel={Speedup over 1 worker},
   ymin=0, ymax=8.5, ytick={0,2,4,6,8},
@@ -444,108 +353,38 @@ allow. The gap shows that skew is not the limit.}\label{fig:speedup}
 \end{figure}
 
 \subsection{Why the speedup levels off}
-We tested four explanations.
+\paragraph{Key skew and the long tail --- not the limit.} With Flink's own
+key-group assignment, the busiest worker receives 50.8, 27.5 and 14.3\,\% of
+the price events at 2, 4 and 8 workers, which would still allow 1.97, 3.64 and
+6.97$\times$ (Figure~\ref{fig:speedup}). The load has a long tail rather than a
+few heavy keys: the busiest symbol holds 0.27\,\% of the events, the top 100
+hold 26.9\,\%, and 306 symbols (6\,\%) cover half.
 
-\paragraph{Key skew --- not the limit.} The keyed window stage can only be as
-fast as its busiest worker. Using Flink's own key-group assignment (128 key
-groups) and the per-symbol event counts, the busiest worker receives 50.8\,\%,
-27.5\,\% and 14.3\,\% of all price events at 2, 4 and 8 workers. This would
-still allow speedups of 1.97$\times$, 3.64$\times$ and 6.97$\times$, far above
-what we measure (Figure~\ref{fig:speedup}). The load is not dominated by a few
-heavy symbols: the busiest symbol holds only 0.27\,\% of events, and 306
-symbols (6\,\%) are needed to cover half of all events.
+\paragraph{Window and EMA work --- small.} Runs restricted to one exchange
+still read and parse every file: NL (10\,\% of the events) takes 72\,s against
+86\,s for all exchanges with one worker, so the window and EMA stage costs
+roughly 14\,s (8\,s with eight workers). Every exchange scales by
+1.7--2.0$\times$ at 8 workers.
 
-\paragraph{Window and EMA work --- small.} Runs that stop after reading
-(\texttt{--stage read}) or after parsing (\texttt{--stage parse}) show that
-reading and parsing take most of the runtime. Reading alone took 61\,s with one
-worker and 26\,s with eight (2.3$\times$). Runs restricted to one exchange
-(\texttt{--exchange}, Table~\ref{tab:exchcpu}) still read and parse every file.
-NL, with 10\,\% of the price events, takes 72\,s with one worker against 86\,s
-for all exchanges, and 38.5\,s against 46.2\,s with eight. The window and EMA
-stage for all 59.4M events therefore costs roughly 14\,s and 8\,s. The speedup at
-8 workers is 1.7--2.0$\times$ for every exchange.
-
-\paragraph{CPU --- not saturated.} At 8 workers the process uses 7.6--7.8 cores
-on average (764--778\,\% CPU) out of 12 hardware threads. The machine is busy
-but not at its limit, and only 8 of the 12 hardware threads belong to performance
-cores; the other 4 run on slower efficiency cores.
-
-\paragraph{One reader per file --- likely the main limit.} \texttt{FileSource} with a
-text-line format does not split files: each file is read and parsed by exactly
-one worker. The week has only five large files, so at most five readers do real
-work, and the run cannot finish before the largest file (5.5\,GB) has been read
-by a single thread. Table~\ref{tab:volume} is consistent with this. With 8 workers, one
-day (exactly that largest file) takes 31\,s and uses only 2.2 cores; seven days
-take only 1.7$\times$ longer for 4.5$\times$ more data. Throughput grows with the
-number of files, not with the number of workers.
-
-\begin{table}[t]
-\caption{Volume scaling at 8 workers (median of 3).}\label{tab:volume}
-\begin{tabular}{lrrrrr}
-\toprule
-Input & Files & Lines & Time & Lines/s & CPU \\
-\midrule
-1 day  & 1 &  64.6M & 31.1\,s & 2.1M & 216\,\% \\
-2 days & 2 & 120.1M & 33.1\,s & 3.6M & 365\,\% \\
-4 days & 4 & 235.1M & 45.0\,s & 5.2M & 654\,\% \\
-7 days & 7$^\ast$ & 289.1M & 53.2\,s & 5.4M & 778\,\% \\
-\bottomrule
-\multicolumn{6}{l}{\footnotesize $^\ast$5 large weekday files and 2 near-empty weekend files.}\\
-\multicolumn{6}{l}{\footnotesize Peak memory (RSS) 2.2--2.8\,GB in all runs.}\\
-\end{tabular}
-\end{table}
-
-\paragraph{Limiting the CPUs.} We pinned the 8-worker job to 1--12 logical
-CPUs with \texttt{taskset} (Table~\ref{tab:exchcpu}, bottom). Runtime falls from
-161\,s on one CPU to 43.7\,s on twelve (3.7$\times$). Over the same range, the
-CPU time for the same work rises from 160\,s to 350\,s (2.2$\times$).
-From 6 to 12 CPUs, the runtime drops 14\,\% for 30\,\% more CPU time, and even
-with 12 CPUs available only 8.0 are busy on average. Each added CPU therefore
-contributes less. We did not test why. Plausible causes are coordination and
-garbage-collection overhead, hyperthread siblings sharing a core, and slower
-efficiency cores. WSL2 hides which host cores are performance cores, so our CPU
-sets (one thread per virtual core first) cannot separate these effects.
-
-\begin{table}[t]
-\caption{Per-exchange runs (top) and CPU-limited runs at 8 workers (bottom);
-7 days, median of 2 runs. Measured in separate sessions from
-Table~\ref{tab:speedup}.}\label{tab:exchcpu}
-\begin{tabular}{lrrrr}
-\toprule
-Exchange & Events & 1 worker & 8 workers & Speedup \\
-\midrule
-NL  &  6.0M & 72.2\,s & 38.5\,s & 1.88 \\
-ETR & 32.0M & 77.3\,s & 38.6\,s & 2.00 \\
-FR  & 21.4M & 74.0\,s & 43.3\,s & 1.71 \\
-All & 59.4M & 85.8\,s & 46.2\,s & 1.86 \\
-\midrule
-CPUs & Time & CPU time & Busy CPUs & Speedup \\
-\midrule
-1  & 161.0\,s & 159.7\,s & 0.99 & 1.00 \\
-2  &  86.7\,s & 168.5\,s & 1.94 & 1.86 \\
-4  &  59.4\,s & 221.1\,s & 3.72 & 2.71 \\
-6  &  51.0\,s & 268.3\,s & 5.26 & 3.16 \\
-12 &  43.7\,s & 349.6\,s & 8.01 & 3.68 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-However, splitting the input did not remove the plateau
-(Table~\ref{tab:ablation}). With each day cut into 8 files (56 files), the
-process used almost 10 cores (986\,\% CPU) but finished in the same time as
-the baseline. The splittable legacy source, which divides files into byte
-ranges, was even 1.6$\times$ slower. Once the reading is spread out, the job
-appears to be limited by the shared hardware itself: parsing is mostly byte
-scanning and string allocation, and the readers compete with the shuffle, the
-garbage collector and WSL2's file-system layer for the same 4 performance cores
-and memory bandwidth. We did not measure this last step directly.
+\paragraph{One reader per file --- the likely limit.} \texttt{FileSource} with a
+text-line format reads each file with one worker, and the week has five large
+files, so the run cannot finish before the largest file (5.5\,GB) has been read
+by one thread. With 8 workers that day alone takes 31\,s on 2.2 cores, and
+seven days take only 1.7$\times$ longer for 4.5$\times$ more data. The process
+uses 7.6--7.8 of 12 hardware threads, only 8 of which are performance cores.
+Pinned to 1--12 CPUs, the runtime falls from 161\,s to 43.7\,s (3.7$\times$)
+while the CPU time rises 2.2$\times$. Splitting each day into 8 files used
+almost 10 cores but did not shorten the run (Table~\ref{tab:ablation}), so
+beyond the reader the shared hardware (4 performance cores, memory bandwidth,
+WSL2's file layer) appears to be the limit; we did not measure this directly.
+The per-exchange, volume and CPU-limit tables are in
+\texttt{docs/EXPERIMENTS.md} in the repository (Section~3).
 
 \subsection{Ablation}\label{sec:ablation}
 Table~\ref{tab:ablation} changes one factor at a time from the final
-configuration on the full week at 8 workers. Every configuration produced
-output identical to the baseline. The ablation was run in a separate session from
-Table~\ref{tab:speedup}, so its baseline (50.8\,s) differs from the 57.3\,s
-there by about 10\,\%; we compare configurations only within one session.
+configuration (full week, 8 workers). It was run in a separate session, so its
+baseline differs from Table~\ref{tab:speedup} by about 10\,\%. Every
+configuration produced identical output.
 
 \begin{table}[t]
 \caption{Ablation, 7 days, 8 workers (median of 3 runs).}\label{tab:ablation}
@@ -566,12 +405,10 @@ Object reuse enabled         &  49.9\,s & 0.98 & 819\,\% & 2.7\,GB \\
 \end{table}
 
 The parser matters most: the original parser makes the whole job 2.1$\times$
-slower, which confirms that parsing dominates the runtime. Parallel GC is
-16\,\% faster than G1 and uses 1.7$\times$ less memory, because G1 grows the
-heap more eagerly. Object reuse and splitting the files have no measurable
-effect (2\,\% is within run-to-run noise). The legacy source is slower even
-though it splits files, and it keeps the CPU less busy. We did not
-investigate why, because this API is deprecated and removed in Flink 2.0.
+slower, which confirms that parsing dominates. Parallel GC is 16\,\% faster
+than G1 and uses 1.7$\times$ less memory. Object reuse and splitting the files
+have no measurable effect (2\,\% is within noise); the deprecated splittable
+legacy source is 1.6$\times$ slower.
 
 \section{Visualisation}\label{sec:viz}
 To inspect the results we built a static web page (vanilla JavaScript, no
@@ -593,129 +430,61 @@ EMA spread below.}\label{fig:viz}
 \end{figure}
 
 \section{Discussion and Limitations}\label{sec:discussion}
-\paragraph{Late events and tolerance.} A live deployment would use a
-tolerance of seconds to minutes and accept a small number of late events; our
-side output makes that trade-off measurable. On the full week at 8 workers, tolerances of 200\,h and 24\,h give no late
-events. Tolerances of 6\,h, 1\,h and 0.1\,h all give exactly 5,506 late
-events, the same in two runs. In the 0.1\,h run these are exactly the 5,506
-price rows with the 01:00:00.000 placeholder time of Section~\ref{sec:data}
-(index rows of 1,812 FR/NL indices with an empty \texttt{Trading date}, in the
-10 November file about 18\,h after their event time); no other event is late.
-Dropping them removes the 01:05 window of each of these indices, with 53
-advisories under the literal rule (51 under the strict rule). Only these
-indices are affected: all other symbols give bit-identical results. For 1,810
-of them the dropped window is not their first, so the seed is unchanged, but
-the EMAs miss one update; the difference decays only by a factor of 37/39
-(EMA38) and 99/101 (EMA100) per window, so it persists in later windows (up to
-1.6\,\% for EMA38 and 0.74\,\% for EMA100). For the other two indices the
-dropped window was the first, so their seed changes. In later windows of the
-affected indices 886 advisories disappear and 903 appear (none flips between
-BUY and SELL), giving 24,800 advisories instead of 24,836.
-Our main run uses the 200\,h tolerance because it makes the results
-independent of parallelism and reading order. In our replay, a 6-minute
-tolerance changes only the 1,812 placeholder-time indices: the total changes
-by 36 of 24,836 advisories (0.15\,\%; 1,842 individual advisories differ, all
-in these indices), and every other symbol stays bit-identical. A streaming
-deployment could therefore use a short tolerance and emit each window about
-6 minutes after it ends in event time.
+\paragraph{Late events and tolerance.} On the full week, tolerances of 200\,h
+and 24\,h give no late events; 6\,h, 1\,h and 0.1\,h all give exactly the
+5,506 placeholder rows as late, with the same result as dropping them
+(Section~\ref{sec:cleaning}). Our main run uses 200\,h because it makes the
+results independent of parallelism and reading order; a streaming deployment
+could use a tolerance of minutes.
 
-\paragraph{Latency: probe and paced replay.} With \texttt{--latency-log}, the
-parser stamps each event with the wall-clock time at which it enters the
-pipeline, and the window function writes, for every result, the time from that
-stamp (of the window's last event) to the moment the result is emitted. All
-tasks run in one JVM, so the stamps are comparable. Read as fast as possible,
-the input is a backlog, not a stream, so we added a paced replay
-(\texttt{--replay-speed}~$S$): right after parsing, each reader holds an event
-until $\textit{start} + V/S$ of wall-clock time has passed, where $V$ is the
-event time elapsed so far (the largest event time seen, with forward jumps over
-10 minutes counted as 10 minutes). The arrival stamp is renewed when the event
-is released, so the deliberate wait is not counted as latency. We replay one
-weekday without placeholder rows (11 November: 11.8M price events over
-15.6\,h of event time, no gap over 10 minutes) with tolerance 0.1\,h at
-parallelism 8. This is a single day file, which one reader reads, so the sweep
-measures the pipeline behind one reader, not the five parallel readers of the
-full week. The results are identical at every speed.
-
-\begin{table*}[t]
-\caption{Paced replay of 11 November (tolerance 0.1\,h, parallelism 8,
-368,727 results). \emph{Measured}: wall-clock latency of each result.
-\emph{Excess}: measured $-$ built-in wait, where the built-in wait is the event
-time from the window's last event to window end $+$ tolerance (or to the end
-of the input), divided by $S$. Times in ms. $^\ast$Run later, when the
-machine was about 2.4$\times$ slower (unpaced 53.8\,s instead of
-22.7\,s).}\label{tab:paced}
+\begin{table}[t]
+\caption{Paced replay of 11 November (tolerance 0.1\,h, 368,727 results;
+latency in ms). Excess: measured latency minus the built-in wait (event time
+from the window's last event to window end $+$ tolerance, divided by $S$).
+$^\ast$Later runs, with the machine about 2.4$\times$ slower.}\label{tab:paced}
 \small
-\begin{tabular}{lrrrrrrr}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrr}
 \toprule
-$S$ & 60 & 300 & 1500 & unpaced & 3000$^\ast$ & 6000$^\ast$ & unpaced$^\ast$ \\
+ & & \multicolumn{2}{c}{Measured} & \multicolumn{2}{c}{Excess} \\
+$S$ & Time (s) & median & p99 & median & p99 \\
 \midrule
-Run time (s)     & 938.7 & 190.7 & 41.2 & 22.7 & 56.9 & 58.6 & 53.8 \\
-Events/s         & 12.6k & 62.1k & 287k & 521k & 208k & 202k & 220k \\
-\midrule
-Measured median  & 6,397 & 1,381 & 406 & 313 & 625 & 652 & 593 \\
-Measured p95     & 8,972 & 1,886 & 514 & 466 & 912 & 1,020 & 921 \\
-Measured p99     & 11,051 & 2,347 & 576 & 614 & 1,085 & 1,384 & 1,459 \\
-Measured max     & 14,987 & 3,003 & 794 & 810 & 1,574 & 1,974 & 2,143 \\
-\midrule
-Excess median    & 145 & 120 & 147 & 313 & 498 & 588 & 593 \\
-Excess p95       & 257 & 219 & 211 & 466 & 780 & 951 & 921 \\
-Excess p99       & 286 & 239 & 272 & 614 & 904 & 1,320 & 1,459 \\
+60              & 938.7 & 6,397 & 11,051 & 145 & 286 \\
+300             & 190.7 & 1,381 &  2,347 & 120 & 239 \\
+1500            &  41.2 &   406 &    576 & 147 & 272 \\
+unpaced         &  22.7 &   313 &    614 & 313 & 614 \\
+3000$^\ast$     &  56.9 &   625 &  1,085 & 498 & 904 \\
+6000$^\ast$     &  58.6 &   652 &  1,384 & 588 & 1,320 \\
+unpaced$^\ast$  &  53.8 &   593 &  1,459 & 593 & 1,459 \\
 \bottomrule
 \end{tabular}
-\end{table*}
+\end{table}
 
-\paragraph{Latency results.} Table~\ref{tab:paced} shows that, while the
-pipeline keeps up, the measured latency is almost entirely the wait built into
-event-time windows. A window can fire only when event time has passed its end
-plus the tolerance, so its last event waits between 6 and 11 minutes of event
-time (0.1\,h tolerance plus up to one 5-minute window), which at $S{=}60$ is 6
-to 11\,s of wall-clock time. What the pipeline adds, the excess, stays at a
-median of 120--150\,ms and a p99 below 290\,ms up to $S{=}1500$ (287k
-events/s), consistent with the 200\,ms watermark interval. Up to $S{=}1500$
-every paced run ends about 3.7\,s after its built-in wait ($V/S$), so the
-pipeline keeps up. At $S{=}3000$ and $6000$ it does not: these runs took as
-long as an unpaced run made at the same time, and the excess rose to a median
-of 0.50 and 0.59\,s. The machine was about 2.4$\times$ slower during these
-runs than during the first four, so they show that the pipeline saturates, but
-not where between $S{=}1500$ and $3000$ this starts in the faster state; from
-the faster unpaced run (22.7\,s) we would expect it near $S \approx 3{,}000$,
-which is an extrapolation. Once the pipeline saturates, events also wait in
-the reader before they are stamped, so the excess then understates the delay.
-
-\paragraph{End of the day.} In the 686 windows that end in the last 30 minutes
-before the day's last event, trading thins out, and the event that moves event
-time past a window's end plus tolerance can come minutes later. That wait is
-still deliberate pacing: counted from the event that actually fires the window,
-the excess in these windows is at most 43\,ms ($S{=}60$), 236\,ms ($S{=}300$)
-and 116\,ms ($S{=}1500$). Counted to the window end plus tolerance instead, it
-reaches 4.1\,s at $S{=}60$ (about 4 minutes of event time).
-
-\paragraph{Limits of the saturated replay.} Our first latency measurement read
-the full week as fast as possible (median 40\,s, p99 106\,s at 0.1\,h); there,
-events queue in buffers and windows wait for the watermark to sweep through the
-backlog, so those numbers reflect the length of the run, not the latency of the
-pipeline. A live deployment would see the paced numbers: the tolerance and
-window size set the latency, and the pipeline adds a fraction of a second.
-
-\paragraph{Cost of the probe code.} With the probe off (no
-\texttt{--latency-log}, no \texttt{--replay-speed}), the probe build still
-carries the extra timestamp field through the pipeline. On the full week
-(200\,h, parallelism 8, three alternating runs each, idle machine) the main
-build took 48.1, 51.5 and 50.4\,s and the probe build 52.7, 52.9 and 52.3\,s,
-about 5\,\% more (mean 50.0 vs 52.7\,s). The difference (2.7\,s) is smaller
-than the spread of the main runs (3.5\,s), but all three probe runs were slower
-than all three main runs. The outputs are identical. The latency code is now
-part of the main build, so the throughput numbers of Section~\ref{sec:eval},
-measured before it was added, do not include this cost.
+\paragraph{Latency.} With \texttt{--latency-log}, every result records the
+time from the arrival of its window's last event to its emission. Read at full
+speed, the input is a backlog, and the full week gives a median of 40\,s that
+reflects the length of the run, not latency. A paced replay
+(\texttt{--replay-speed}~$S$) therefore releases each event when
+$\textit{start} + V/S$ has passed, $V$ being the event time elapsed so far
+(jumps over 10 minutes count as 10); the arrival is stamped at release.
+Table~\ref{tab:paced} replays 11 November (11.8M events, no placeholder rows,
+one day file read by one reader). A window fires only when event time passes
+its end plus the tolerance, so its last event waits 6--11 minutes of event
+time, 6--11\,s at $S{=}60$: the tolerance and window size set the latency. The
+excess over this wait stays at a median of 120--150\,ms up to $S{=}1500$ (287k
+events/s), consistent with the 200\,ms watermark interval. At $S{=}3000$ and
+$6000$ the runs took as long as an unpaced run and the excess grew: the
+pipeline saturates. These runs were made with the machine about 2.4$\times$
+slower, so where saturation starts in the faster state is an extrapolation
+(near $S \approx 3{,}000$). With the probe off, the probe code costs about
+5\,\% (52.7 vs 50.0\,s; the throughput numbers above predate it). Full tables
+are in \texttt{docs/EXPERIMENTS.md} in the repository (Section~4).
 
 \paragraph{Interpretation choices.} The crossover rule and the window price
-(latest timestamp, ties by input order) are fixed by the instructor; our main
-result uses them. The strict rule, which drops the 4,847 equal-start signals
-(19.5\,\%), is an extra analysis only, and floating-point rounding moves
-another 1--2\,\% of the signals (Section~\ref{sec:correct}). Empty windows
-are handled as discussed with the instructor (either choice is acceptable).
-The handling of rows without a trading date and of late events remains our own
-choice; both change which windows exist at all.
+are fixed by the instructor. The strict rule (4,847 fewer signals, 19.5\,\%) is
+an extra analysis, and rounding moves another 1--2\,\% of the signals
+(Section~\ref{sec:correct}). The handling of rows without a trading date and of
+late events is our own choice; both change which windows exist.
 
 \paragraph{Single machine.} All measurements are from one laptop running
 Flink's mini-cluster, so the shuffle never crosses a network. On a cluster with
@@ -727,7 +496,9 @@ A small Flink job computes both DEBS 2022 queries on a full week of tick data
 in under a minute on a laptop, with results identical at every parallelism
 level. Profiling showed that windowing and EMA state are cheap and key skew is
 mild. The cost lies in reading and parsing 24\,GB of text, and Flink's
-file-level source parallelism limits how far that step can be spread.
+file-level source parallelism limits how far that step can be spread. In a
+paced replay, the pipeline adds about 0.15\,s to the latency that the window
+size and tolerance impose.
 
 \begin{acks}
 % TODO: individual contributions, if required by the course.
