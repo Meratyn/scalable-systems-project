@@ -31,7 +31,7 @@ Smaller subsets used during development (also gitignored):
 ## Build
 
 ```
-cd java-job && mvn -q package -DskipTests
+./build.sh
 ```
 
 This produces `java-job/target/ema-crossover-1.0.jar` (a fat jar that runs
