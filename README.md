@@ -94,7 +94,9 @@ epoch milliseconds (UTC).
      This removes "crossovers" that start from equal EMAs, for example in a
      symbol's second window, right after seeding.
 
-Only windows that contain events are emitted. Empty windows are skipped.
+As discussed with the instructor, either passing the EMA state forward or
+dropping it is acceptable; we emit no result for a window without events and
+let the EMAs continue from their last values.
 
 **Window price and ties.** The window price is the event with the latest
 trading timestamp (confirmed by the instructor). On equal timestamps the later

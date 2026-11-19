@@ -106,6 +106,77 @@ Total & 4,970 & 59.4M & \\
 \end{tabular}
 \end{table}
 
+\paragraph{Times and a data quirk.} Trading times are local exchange time:
+CET (UTC+1) in November 2021. The specification mentions CEST, but that is the
+summer offset. We treat the wall-clock times as instants and never convert them,
+so the offset changes no window or result. One quirk: on 10 November, 5,506
+index rows for 1,812 FR/NL indices were published at 18:56 with an empty
+\texttt{Trading date} and a placeholder \texttt{Trading time} of 01:00:00.000.
+The system-date fallback places them at 01:00 that morning, which creates one
+window per index outside trading hours with 53 advisories under the literal
+rule (51 under the strict rule). We keep them as the data defines them.
+
+\paragraph{Rules confirmed by the instructor.} The crossover rule is the
+literal one of Equations (1)--(4), including equality in the previous window
+(Section~\ref{sec:design}). The window's price $P$ is the price event with the
+latest trading timestamp in the window. On equal timestamps the event that
+comes later in input order wins (files by name, i.e.\ by day, then line). Ties
+are common: in 92,233 of the 1,857,457 (symbol, window) groups (5.0\,\%) the
+latest timestamp is shared by two or more events, and in 23,320 (1.26\,\%)
+those events have different prices (ETR 10,051, FR 10,995, NL 2,274). All of
+these ties lie within a single file. Our file source reads each file with one
+reader and Flink's channels keep the order, so the later line always wins at
+every parallelism; a unit test checks this. Both EMAs of a symbol are seeded
+with its first price instead of the specification's 0, so the first window has
+no advisory; this is allowed by the instructor if the choice is explained.
+As discussed with the instructor, either passing the EMA state forward or
+dropping it is acceptable; we emit no result for a window without events and
+let the EMAs continue from their last values.
+
+\paragraph{Our assumptions.} These are our own choices; we discuss them in
+Section~\ref{sec:discussion}.
+\begin{itemize}
+\item A row with an empty \texttt{Trading date} takes the system date; the
+  instructor also allows dropping it, and we report both variants
+  (Table~\ref{tab:datevar}).
+\item No event is late: the watermark tolerance (200\,h) exceeds the dataset,
+  so out-of-order events still count (Section~\ref{sec:design}).
+\end{itemize}
+
+\subsection{Data cleaning}\label{sec:cleaning}
+All cleaning happens inside the streaming pipeline, in the parser stage that
+turns each CSV line into a price event (Section~\ref{sec:design}); there is no
+separate pre-pass over the files. Table~\ref{tab:drop} counts every input line
+under the first rule it fails, in the parser's order.
+
+\begin{table}[t]
+\caption{Why input lines are dropped (full week). Each line is counted once,
+under the first rule it fails.}\label{tab:drop}
+\small
+\begin{tabular}{lrr}
+\toprule
+Reason & Lines & Share \\
+\midrule
+Empty \texttt{Last}                       & 229,408,756 & 79.35\,\% \\
+\texttt{Last} = 0                         &     316,382 &  0.11\,\% \\
+Comment or header line                    &          91 &  0.00\,\% \\
+Other (short row, no \texttt{Trading time}, unparsable) & 0 & 0\,\% \\
+\midrule
+Kept as price events                      &  59,391,670 & 20.54\,\% \\
+\midrule
+Total                                     & 289,116,899 & 100\,\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Rows without a price.} Only 20.5\,\% of the lines are price
+events. Rows with an empty or zero \texttt{Last} contain no trade price
+(79.35\,\% and 0.11\,\% of all lines) and are dropped. In a sample (the first
+two million lines of one file), 64\,\% of the rows with an empty \texttt{Last}
+carry only the symbol and system time; the others also carry a bid or ask
+quote or a total volume. Each file starts with 13 non-data lines (an 11-line
+licence comment, the column header and a column description), 91 in total.
+
 \paragraph{Rows without a trading date.} The instructor allows rows with an
 empty \texttt{Trading date} to be ignored. We ran both variants on the full
 week (parallelism 8, literal rule; Table~\ref{tab:datevar}). Our main run uses
@@ -138,41 +209,20 @@ Signals (BUY+SELL) &     24,836 &     2,889 & 88.4\,\% \\
 \end{tabular}
 \end{table}
 
-\paragraph{Times and a data quirk.} Trading times are local exchange time:
-CET (UTC+1) in November 2021. The specification mentions CEST, but that is the
-summer offset. We treat the wall-clock times as instants and never convert them,
-so the offset changes no window or result. One quirk: on 10 November, 5,506
-index rows for 1,812 FR/NL indices were published at 18:56 with an empty
-\texttt{Trading date} and a placeholder \texttt{Trading time} of 01:00:00.000.
-The system-date fallback places them at 01:00 that morning, which creates one
-window per index outside trading hours with 53 advisories under the literal
-rule (51 under the strict rule). We keep them as the data defines them.
+\paragraph{Placeholder rows.} The 5,506 index rows of 1,812 FR/NL indices in
+the 10 November file with an empty \texttt{Trading date} and the placeholder
+\texttt{Trading time} 01:00:00.000 (Section~\ref{sec:data}) were pointed out by
+the instructor as an example of dirty real-world data. The main run keeps them
+as the data defines them; the option \texttt{--drop-placeholder-time} drops
+exactly these rows (empty \texttt{Trading date} and \texttt{Trading time}
+01:00:00.000, nothing else). Without them the full week gives 24,800
+advisories instead of 24,836: the dropped windows held 53, and in later
+windows of the 1,812 indices 886 disappear and 903 appear (none flips between
+BUY and SELL). Every other symbol is bit-identical. The result equals that of
+the 0.1\,h-tolerance run, in which the same rows arrive late
+(Section~\ref{sec:discussion}).
 
-\paragraph{Rules confirmed by the instructor.} The crossover rule is the
-literal one of Equations (1)--(4), including equality in the previous window
-(Section~\ref{sec:design}). The window's price $P$ is the price event with the
-latest trading timestamp in the window. On equal timestamps the event that
-comes later in input order wins (files by name, i.e.\ by day, then line). Ties
-are common: in 92,233 of the 1,857,457 (symbol, window) groups (5.0\,\%) the
-latest timestamp is shared by two or more events, and in 23,320 (1.26\,\%)
-those events have different prices (ETR 10,051, FR 10,995, NL 2,274). All of
-these ties lie within a single file. Our file source reads each file with one
-reader and Flink's channels keep the order, so the later line always wins at
-every parallelism; a unit test checks this. Both EMAs of a symbol are seeded
-with its first price instead of the specification's 0, so the first window has
-no advisory; this is allowed by the instructor if the choice is explained.
-
-\paragraph{Our assumptions.} These are our own choices; we discuss them in
-Section~\ref{sec:discussion}.
-\begin{itemize}
-\item A window in which a symbol has no price event produces no output and
-  does not update the EMAs.
-\item A row with an empty \texttt{Trading date} takes the system date; the
-  instructor also allows dropping it, and we report both variants
-  (Table~\ref{tab:datevar}).
-\item No event is late: the watermark tolerance (200\,h) exceeds the dataset,
-  so out-of-order events still count (Section~\ref{sec:design}).
-\end{itemize}
+% TODO: "Order within a symbol" paragraph, after the per-symbol order check (OrderReport).
 
 \section{System Design}\label{sec:design}
 Figure~\ref{fig:pipeline} shows the dataflow.
@@ -565,9 +615,10 @@ speed, we measure throughput and cannot measure streaming latency.
 (latest timestamp, ties by input order) are fixed by the instructor; our main
 result uses them. The strict rule, which drops the 4,847 equal-start signals
 (19.5\,\%), is an extra analysis only, and floating-point rounding moves
-another 1--2\,\% of the signals (Section~\ref{sec:correct}). The handling of
-empty windows, of rows without a trading date and of late events remains our
-own assumption; the latter two change which windows exist at all.
+another 1--2\,\% of the signals (Section~\ref{sec:correct}). Empty windows
+are handled as discussed with the instructor (either choice is acceptable).
+The handling of rows without a trading date and of late events remains our own
+choice; both change which windows exist at all.
 
 \paragraph{Single machine.} All measurements are from one laptop running
 Flink's mini-cluster, so the shuffle never crosses a network. On a cluster with
