@@ -585,12 +585,9 @@ EMA spread below.}\label{fig:viz}
 \end{figure}
 
 \section{Discussion and Limitations}\label{sec:discussion}
-\paragraph{Throughput, not latency.} We replay a static dataset as fast as
-possible and report throughput. With a 200\,h watermark tolerance, results
-appear only when the input ends, so per-event latency is not meaningful in this
-setup. A live deployment would use a tolerance of seconds to minutes and accept
-a small number of late events. Our side output makes that trade-off measurable.
-On the full week at 8 workers, tolerances of 200\,h and 24\,h give no late
+\paragraph{Late events and tolerance.} A live deployment would use a
+tolerance of seconds to minutes and accept a small number of late events; our
+side output makes that trade-off measurable. On the full week at 8 workers, tolerances of 200\,h and 24\,h give no late
 events. Tolerances of 6\,h, 1\,h and 0.1\,h all give exactly 5,506 late
 events, the same in two runs. In the 0.1\,h run these are exactly the 5,506
 price rows with the 01:00:00.000 placeholder time of Section~\ref{sec:data}
@@ -612,9 +609,96 @@ tolerance changes only the 1,812 placeholder-time indices: the total changes
 by 36 of 24,836 advisories (0.15\,\%; 1,842 individual advisories differ, all
 in these indices), and every other symbol stays bit-identical. A streaming
 deployment could therefore use a short tolerance and emit each window about
-6 minutes after it ends in event time. Since our runs read the files at full
-speed, we measure throughput and cannot measure streaming latency.
-% TODO: update after the professor's answer on latency expectations.
+6 minutes after it ends in event time.
+
+\paragraph{Latency: probe and paced replay.} With \texttt{--latency-log}, the
+parser stamps each event with the wall-clock time at which it enters the
+pipeline, and the window function writes, for every result, the time from that
+stamp (of the window's last event) to the moment the result is emitted. All
+tasks run in one JVM, so the stamps are comparable. Read as fast as possible,
+the input is a backlog, not a stream, so we added a paced replay
+(\texttt{--replay-speed}~$S$): right after parsing, each reader holds an event
+until $\textit{start} + V/S$ of wall-clock time has passed, where $V$ is the
+event time elapsed so far (the largest event time seen, with forward jumps over
+10 minutes counted as 10 minutes). The arrival stamp is renewed when the event
+is released, so the deliberate wait is not counted as latency. We replay one
+weekday without placeholder rows (11 November: 11.8M price events over
+15.6\,h of event time, no gap over 10 minutes) with tolerance 0.1\,h at
+parallelism 8. This is a single day file, which one reader reads, so the sweep
+measures the pipeline behind one reader, not the five parallel readers of the
+full week. The results are identical at every speed.
+
+\begin{table*}[t]
+\caption{Paced replay of 11 November (tolerance 0.1\,h, parallelism 8,
+368,727 results). \emph{Measured}: wall-clock latency of each result.
+\emph{Excess}: measured $-$ built-in wait, where the built-in wait is the event
+time from the window's last event to window end $+$ tolerance (or to the end
+of the input), divided by $S$. Times in ms. $^\ast$Run later, when the
+machine was about 2.4$\times$ slower (unpaced 53.8\,s instead of
+22.7\,s).}\label{tab:paced}
+\small
+\begin{tabular}{lrrrrrrr}
+\toprule
+$S$ & 60 & 300 & 1500 & unpaced & 3000$^\ast$ & 6000$^\ast$ & unpaced$^\ast$ \\
+\midrule
+Run time (s)     & 938.7 & 190.7 & 41.2 & 22.7 & 56.9 & 58.6 & 53.8 \\
+Events/s         & 12.6k & 62.1k & 287k & 521k & 208k & 202k & 220k \\
+\midrule
+Measured median  & 6,397 & 1,381 & 406 & 313 & 625 & 652 & 593 \\
+Measured p95     & 8,972 & 1,886 & 514 & 466 & 912 & 1,020 & 921 \\
+Measured p99     & 11,051 & 2,347 & 576 & 614 & 1,085 & 1,384 & 1,459 \\
+Measured max     & 14,987 & 3,003 & 794 & 810 & 1,574 & 1,974 & 2,143 \\
+\midrule
+Excess median    & 145 & 120 & 147 & 313 & 498 & 588 & 593 \\
+Excess p95       & 257 & 219 & 211 & 466 & 780 & 951 & 921 \\
+Excess p99       & 286 & 239 & 272 & 614 & 904 & 1,320 & 1,459 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\paragraph{Latency results.} Table~\ref{tab:paced} shows that, while the
+pipeline keeps up, the measured latency is almost entirely the wait built into
+event-time windows. A window can fire only when event time has passed its end
+plus the tolerance, so its last event waits between 6 and 11 minutes of event
+time (0.1\,h tolerance plus up to one 5-minute window), which at $S{=}60$ is 6
+to 11\,s of wall-clock time. What the pipeline adds, the excess, stays at a
+median of 120--150\,ms and a p99 below 290\,ms up to $S{=}1500$ (287k
+events/s), consistent with the 200\,ms watermark interval. Up to $S{=}1500$
+every paced run ends about 3.7\,s after its built-in wait ($V/S$), so the
+pipeline keeps up. At $S{=}3000$ and $6000$ it does not: these runs took as
+long as an unpaced run made at the same time, and the excess rose to a median
+of 0.50 and 0.59\,s. The machine was about 2.4$\times$ slower during these
+runs than during the first four, so they show that the pipeline saturates, but
+not where between $S{=}1500$ and $3000$ this starts in the faster state; from
+the faster unpaced run (22.7\,s) we would expect it near $S \approx 3{,}000$,
+which is an extrapolation. Once the pipeline saturates, events also wait in
+the reader before they are stamped, so the excess then understates the delay.
+
+\paragraph{End of the day.} In the 686 windows that end in the last 30 minutes
+before the day's last event, trading thins out, and the event that moves event
+time past a window's end plus tolerance can come minutes later. That wait is
+still deliberate pacing: counted from the event that actually fires the window,
+the excess in these windows is at most 43\,ms ($S{=}60$), 236\,ms ($S{=}300$)
+and 116\,ms ($S{=}1500$). Counted to the window end plus tolerance instead, it
+reaches 4.1\,s at $S{=}60$ (about 4 minutes of event time).
+
+\paragraph{Limits of the saturated replay.} Our first latency measurement read
+the full week as fast as possible (median 40\,s, p99 106\,s at 0.1\,h); there,
+events queue in buffers and windows wait for the watermark to sweep through the
+backlog, so those numbers reflect the length of the run, not the latency of the
+pipeline. A live deployment would see the paced numbers: the tolerance and
+window size set the latency, and the pipeline adds a fraction of a second.
+
+\paragraph{Cost of the probe code.} With the probe off (no
+\texttt{--latency-log}, no \texttt{--replay-speed}), the probe build still
+carries the extra timestamp field through the pipeline. On the full week
+(200\,h, parallelism 8, three alternating runs each, idle machine) the main
+build took 48.1, 51.5 and 50.4\,s and the probe build 52.7, 52.9 and 52.3\,s,
+about 5\,\% more (mean 50.0 vs 52.7\,s). The difference (2.7\,s) is smaller
+than the spread of the main runs (3.5\,s), but all three probe runs were slower
+than all three main runs. The outputs are identical. The latency code is now
+part of the main build, so the throughput numbers of Section~\ref{sec:eval},
+measured before it was added, do not include this cost.
 
 \paragraph{Interpretation choices.} The crossover rule and the window price
 (latest timestamp, ties by input order) are fixed by the instructor; our main

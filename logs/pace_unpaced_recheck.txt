@@ -1,3 +1,14 @@
 unpaced re-check after the 3000/6000 runs (same jar and settings as pace_sweep: 11 Nov, tolerance 0.1 h, p8, probe on)
 2026-11-19 start 17:20:29, load average 1.28
 unpaced rc=0 53.803544352s (16:39 sweep: 22.719922330s)
+speed=Infinity tolerance_h=0.1 results=368727 price_events=11835403
+group,metric,count,median_ms,p95_ms,p99_ms,max_ms
+all,measured,368727,592.8,921.1,1459.4,2142.9
+all,excess,368727,592.8,921.1,1459.4,2142.9
+all,excess_trigger,368727,592.8,921.1,1459.4,2142.9
+last30min,measured,686,37.8,43.9,45.2,45.7
+last30min,excess,686,37.8,43.9,45.2,45.7
+last30min,excess_trigger,686,37.8,43.9,45.2,45.7
+others,measured,368041,593.1,921.2,1462.8,2142.9
+others,excess,368041,593.1,921.2,1462.8,2142.9
+others,excess_trigger,368041,593.1,921.2,1462.8,2142.9
