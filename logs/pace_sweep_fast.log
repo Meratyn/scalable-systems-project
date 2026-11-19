@@ -1,0 +1,11 @@
+2026-11-19 17:16:30 start
+17:16:30 begin s3000
+17:17:27 end s3000 rc=0 56.890031811s rows=368727 events_per_s=208040
+17:17:27 begin s6000
+17:18:25 end s6000 rc=0 58.603084626s rows=368727 events_per_s=201958
+2026-11-19 17:18:25 runs done; analysis
+== s60 vs s3000
+IDENTICAL
+== s60 vs s6000
+IDENTICAL
+2026-11-19 17:20:09 done

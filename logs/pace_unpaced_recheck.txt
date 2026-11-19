@@ -1,0 +1,3 @@
+unpaced re-check after the 3000/6000 runs (same jar and settings as pace_sweep: 11 Nov, tolerance 0.1 h, p8, probe on)
+2026-11-19 start 17:20:29, load average 1.28
+unpaced rc=0 53.803544352s (16:39 sweep: 22.719922330s)

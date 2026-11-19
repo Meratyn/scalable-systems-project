@@ -3,16 +3,18 @@
 # Tolerance 0.1 h, probe on, parallelism 8; speeds 60, 300, 1500 and one unpaced run.
 # Runs back to back; analysis (ema.PaceDelay) only after the last run, so nothing else runs
 # during the measurements.
-# Run from anywhere:  /home/asus/repo-latency/scripts/pace_sweep.sh
-# Output: <worktree>/logs/pace_sweep.log, pace_sweep_times.csv, pace_<name>.txt; logs in output/pace/
+# Run from anywhere:  scripts/pace_sweep.sh                 (speeds 60 300 1500 0; 0 = unpaced)
+#                     TAG=_fast scripts/pace_sweep.sh 3000 6000   (extra speeds, separate log files)
+# Output: logs/pace_sweep${TAG}.log, pace_sweep${TAG}_times.csv, pace_<name>.txt; latency logs in output/pace/
 W=$(cd "$(dirname "$0")/.." && pwd)
 cd /home/asus/repo || exit 1
 JAR=$W/java-job/target/ema-crossover-1.0.jar
 DAY=data/raw/debs2022-gc-trading-day-11-11-21.csv
 TOL=0.1
 EVENTS=11835403
-OUT=$W/logs/pace_sweep_times.csv
-LOG=$W/logs/pace_sweep.log
+SPEEDS=${*:-60 300 1500 0}
+OUT=$W/logs/pace_sweep${TAG}_times.csv
+LOG=$W/logs/pace_sweep${TAG}.log
 mkdir -p output/pace
 
 AW=""
@@ -41,18 +43,17 @@ run() { # run <name> <speed|0>
   echo "$name,$speed,$TOL,$secs,$eps,$rows,$rc" >> $OUT
   echo "$(date +%T) end $name rc=$rc ${secs}s rows=$rows events_per_s=$eps" >> $LOG
 }
-run s60 60
-run s300 300
-run s1500 1500
-run unpaced 0
+name_of() { [ "$1" = "0" ] && echo unpaced || echo s$1; }
+for sp in $SPEEDS; do run $(name_of $sp) $sp; done
 echo "$(date '+%F %T') runs done; analysis" >> $LOG
 
-for spec in s60:60 s300:300 s1500:1500 unpaced:Infinity; do
-  name=${spec%%:*}; speed=${spec#*:}
+for sp in $SPEEDS; do
+  name=$(name_of $sp); speed=$sp; [ "$sp" = "0" ] && speed=Infinity
   java -Xmx3g -cp $JAR ema.PaceDelay analyze $DAY $speed $TOL output/pace/$name/lat > $W/logs/pace_$name.txt
 done
 # results must not depend on the speed
-for name in s300 s1500 unpaced; do
+for sp in $SPEEDS; do
+  name=$(name_of $sp); [ "$name" = "s60" ] && continue
   echo "== s60 vs $name" >> $LOG
   python3 compare_runs.py output/pace/s60 output/pace/$name | tail -1 >> $LOG
 done
