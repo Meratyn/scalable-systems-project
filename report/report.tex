@@ -410,7 +410,7 @@ than G1 and uses 1.7$\times$ less memory. Object reuse and splitting the files
 have no measurable effect (2\,\% is within noise); the deprecated splittable
 legacy source is 1.6$\times$ slower.
 
-\section{Visualisation}\label{sec:viz}
+\subsection{Visualisation}\label{sec:viz}
 To inspect the results we built a static web page (vanilla JavaScript, no
 server) from the job's output (Figure~\ref{fig:viz}). It shows EMA38, EMA100
 and the signals per symbol, with zoom, a literal/strict toggle, a day $\times$
@@ -423,7 +423,7 @@ symbols by default; all totals still include every symbol.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\columnwidth]{figures/viz-chart.png}
+\includegraphics[width=0.85\columnwidth]{figures/viz-chart.png}
 \caption{The result explorer for Philips (PHIA.NL): EMA38 (solid) and EMA100
 (dashed) per 5-minute window, BUY (blue) and SELL (orange) triangles, one hollow equal-start signal, and the
 EMA spread below.}\label{fig:viz}
@@ -500,9 +500,14 @@ file-level source parallelism limits how far that step can be spread. In a
 paced replay, the pipeline adds about 0.15\,s to the latency that the window
 size and tolerance impose.
 
-\begin{acks}
-% TODO: individual contributions, if required by the course.
-\end{acks}
+\section{Individual Contributions}\label{sec:contrib}
+% TODO: replace the three placeholders with your answers. Page budget: about
+% half a page (roughly 500 words) for the whole section.
+\paragraph{Question 1.} TODO (about 170 words).
+
+\paragraph{Question 2.} TODO (about 170 words).
+
+\paragraph{Question 3.} TODO (about 170 words).
 
 \bibliographystyle{ACM-Reference-Format}
 \bibliography{references}
