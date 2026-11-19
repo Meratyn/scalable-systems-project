@@ -1,0 +1,10 @@
+file,price_rows,max_lag_s,p999_lag_s,rows_over_6min,rows_over_1min,rows_over_1s
+debs2022-gc-trading-day-08-11-21.csv,11794520,64.517,0.334,0,4,1147
+debs2022-gc-trading-day-09-11-21.csv,11900121,63.760,0.407,0,2,1088
+debs2022-gc-trading-day-10-11-21.csv,12062767,64.788,0.486,0,1,1072
+debs2022-gc-trading-day-11-11-21.csv,11835403,64.739,0.388,0,2,1095
+debs2022-gc-trading-day-12-11-21.csv,11793353,64.758,0.364,0,2,1040
+debs2022-gc-trading-day-13-11-21.csv,0,0.000,0.000,0,0,0
+debs2022-gc-trading-day-14-11-21.csv,0,0.000,0.000,0,0,0
+ALL,59386164,64.788,0.401,0,11,5442
+placeholder rows excluded: 5506
