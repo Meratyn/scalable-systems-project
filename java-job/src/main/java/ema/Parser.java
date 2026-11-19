@@ -24,6 +24,19 @@ public final class Parser {
      * dropped (the behaviour of the first version of the job).
      */
     public static Tuple4<String, String, Double, Long> parse(String line, boolean fallbackToSystemDate) {
+        return parse(line, fallbackToSystemDate, false);
+    }
+
+    /** Placeholder rows: empty Trading date and Trading time exactly 01:00:00.000 (dirty index rows of 10 Nov). */
+    static boolean isPlaceholder(String tradingDate, String tradingTime) {
+        return tradingDate.isEmpty() && tradingTime.equals(PLACEHOLDER_TIME);
+    }
+
+    static final String PLACEHOLDER_TIME = "01:00:00.000";
+
+    /** As parse(line, fallback); dropPlaceholderTime=true also drops placeholder rows (see isPlaceholder). */
+    public static Tuple4<String, String, Double, Long> parse(String line, boolean fallbackToSystemDate,
+                                                             boolean dropPlaceholderTime) {
         if (line.startsWith("#") || line.startsWith("ID,")) {
             return null;
         }
@@ -57,6 +70,9 @@ public final class Parser {
         }
         if (!complete) {
             return null; // fewer than 27 fields
+        }
+        if (dropPlaceholderTime && isPlaceholder(tradingDate, tradingTime)) {
+            return null;
         }
         String date = (tradingDate.isEmpty() && fallbackToSystemDate) ? systemDate : tradingDate;
         if (last.isEmpty() || tradingTime.isEmpty() || date.isEmpty()) {
@@ -155,6 +171,11 @@ public final class Parser {
 
     /** The straightforward split-based version of parse(), for comparison. */
     public static Tuple4<String, String, Double, Long> parseReference(String line, boolean fallbackToSystemDate) {
+        return parseReference(line, fallbackToSystemDate, false);
+    }
+
+    public static Tuple4<String, String, Double, Long> parseReference(String line, boolean fallbackToSystemDate,
+                                                                      boolean dropPlaceholderTime) {
         if (line.startsWith("#") || line.startsWith("ID,")) {
             return null;
         }
@@ -166,6 +187,9 @@ public final class Parser {
         String last = parts[21];
         String tradingTime = parts[23];
         String tradingDate = parts[26];
+        if (dropPlaceholderTime && isPlaceholder(tradingDate, tradingTime)) {
+            return null;
+        }
         String date = (tradingDate.isEmpty() && fallbackToSystemDate) ? parts[2] : tradingDate;
         if (last.isEmpty() || tradingTime.isEmpty() || date.isEmpty()) {
             return null;

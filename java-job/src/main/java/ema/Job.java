@@ -57,6 +57,7 @@ public class Job {
     public static class ParseFn implements FlatMapFunction<String, Tuple4<String, String, Double, Long>> {
         private final boolean fallbackToSystemDate;
         private final boolean reference;
+        private final boolean dropPlaceholderTime;
 
         public ParseFn(boolean fallbackToSystemDate) {
             this(fallbackToSystemDate, false);
@@ -64,15 +65,21 @@ public class Job {
 
         /** reference=true uses the original split-based parser (for the ablation). */
         public ParseFn(boolean fallbackToSystemDate, boolean reference) {
+            this(fallbackToSystemDate, reference, false);
+        }
+
+        /** dropPlaceholderTime=true drops rows with an empty Trading date and Trading time 01:00:00.000. */
+        public ParseFn(boolean fallbackToSystemDate, boolean reference, boolean dropPlaceholderTime) {
             this.fallbackToSystemDate = fallbackToSystemDate;
             this.reference = reference;
+            this.dropPlaceholderTime = dropPlaceholderTime;
         }
 
         @Override
         public void flatMap(String line, Collector<Tuple4<String, String, Double, Long>> out) {
             Tuple4<String, String, Double, Long> e = reference
-                    ? Parser.parseReference(line, fallbackToSystemDate)
-                    : parse(line, fallbackToSystemDate);
+                    ? Parser.parseReference(line, fallbackToSystemDate, dropPlaceholderTime)
+                    : Parser.parse(line, fallbackToSystemDate, dropPlaceholderTime);
             if (e != null) {
                 out.collect(e);
             }
@@ -121,7 +128,9 @@ public class Job {
      *    instructor if the choice is explained; see the report, "EMA starting value").
      *    zeroInit=true (--ema-init zero): as in the spec, both previous EMAs start at 0; the
      *    first window then applies the formula and the crossover rule like any other window.
-     *  - Windows with no price event for a symbol are skipped (stated assumption).
+     *  - Windows with no price event for a symbol emit nothing; the EMAs continue from their
+     *    last values (as discussed with the instructor, passing the state forward or dropping
+     *    it are both acceptable).
      *  - strict=false: spec equations literally (previous EMAs may be equal).
      *    strict=true: a crossover needs the previous EMAs to differ.
      */
@@ -215,6 +224,7 @@ public class Job {
         String stage = "full";
         boolean objectReuse = false;
         boolean requireTradingDate = false;
+        boolean dropPlaceholderTime = false;
         String sourceType = "file";
         String parser = "fast";
         String exchange = "ALL";
@@ -230,6 +240,7 @@ public class Job {
                 case "--stage": stage = argv[++i]; break;
                 case "--object-reuse": objectReuse = true; break;
                 case "--require-trading-date": requireTradingDate = true; break;
+                case "--drop-placeholder-time": dropPlaceholderTime = true; break;
                 case "--source": sourceType = argv[++i]; break;
                 case "--parser": parser = argv[++i]; break;
                 case "--exchange": exchange = argv[++i].toUpperCase(); break;
@@ -237,7 +248,7 @@ public class Job {
                 default:
                     System.err.println("Unknown option: " + argv[i]);
                     System.err.println("Options: --input --output --parallelism --tolerance-hours "
-                            + "--strict-crossover --late-output --stage --object-reuse --require-trading-date --source file|legacy --parser fast|reference --exchange FR|NL|ETR|ALL --ema-init first|zero");
+                            + "--strict-crossover --late-output --stage --object-reuse --require-trading-date --drop-placeholder-time --source file|legacy --parser fast|reference --exchange FR|NL|ETR|ALL --ema-init first|zero");
                     System.exit(2);
             }
         }
@@ -249,6 +260,7 @@ public class Job {
                 + " tolerance_h=" + toleranceHours + " strict=" + strict + " stage=" + stage
                 + " objectReuse=" + objectReuse
                 + " requireTradingDate=" + requireTradingDate
+                + " dropPlaceholderTime=" + dropPlaceholderTime
                 + " source=" + sourceType + " parser=" + parser + " exchange=" + exchange
                 + " emaInit=" + emaInit);
 
@@ -288,7 +300,7 @@ public class Job {
         }
 
         SingleOutputStreamOperator<Tuple4<String, String, Double, Long>> events =
-                rawLines.flatMap(new ParseFn(!requireTradingDate, parser.equals("reference")))
+                rawLines.flatMap(new ParseFn(!requireTradingDate, parser.equals("reference"), dropPlaceholderTime))
                         .returns(Types.TUPLE(Types.STRING, Types.STRING, Types.DOUBLE, Types.LONG));
         if (!exchange.equals("ALL")) {
             // Per-exchange experiments: all files are still read and parsed; only the events
