@@ -1,4 +1,4 @@
-"""Latency statistics from --latency-log files (lines: symbol,window_end_ms,latency_us).
+"""Latency statistics from --latency-log files (lines: symbol,window_end_ms,latency_us[,last_event_ms]).
 
     python3 scripts/latency_stats.py <log_prefix> [<log_prefix> ...]
 
@@ -14,7 +14,7 @@ for prefix in sys.argv[1:]:
     for path in glob.glob(prefix + ".*"):
         with open(path) as f:
             for line in f:
-                vals.append(int(line.rsplit(",", 1)[1]))
+                vals.append(int(line.split(",")[2]))
 vals.sort()
 n = len(vals)
 

@@ -174,7 +174,10 @@ public class Job {
             this(strict, zeroInit, null);
         }
 
-        /** latencyLog != null: each subtask i writes "symbol,window_end_ms,latency_us" to latencyLog.i */
+        /**
+         * latencyLog != null: each subtask i writes "symbol,window_end_ms,latency_us,last_event_ms" to
+         * latencyLog.i (last_event_ms = event time of the window's price event, used for the paced excess).
+         */
         public EmaCrossoverFunction(boolean strict, boolean zeroInit, String latencyLog) {
             this.strict = strict;
             this.zeroInit = zeroInit;
@@ -246,9 +249,9 @@ public class Job {
             ema100State.update(ema100);
             out.collect(Tuple5.of(key, context.window().getEnd(), ema38, ema100, advisory));
             if (latencyOut != null) {
-                // processing-time delay: last event's parser emission -> this result handed downstream
+                // processing-time delay: last event's parser emission (or Pacer release) -> this result handed downstream
                 long us = (System.nanoTime() - close.f4) / 1000;
-                latencyOut.write(key + "," + context.window().getEnd() + "," + us + "\n");
+                latencyOut.write(key + "," + context.window().getEnd() + "," + us + "," + close.f3 + "\n");
             }
         }
     }
