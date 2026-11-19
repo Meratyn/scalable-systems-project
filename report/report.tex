@@ -222,7 +222,12 @@ BUY and SELL). Every other symbol is bit-identical. The result equals that of
 the 0.1\,h-tolerance run, in which the same rows arrive late
 (Section~\ref{sec:discussion}).
 
-% TODO: "Order within a symbol" paragraph, after the per-symbol order check (OrderReport).
+\paragraph{Order within a symbol.} Apart from the 5,506 placeholder rows, the
+price rows of every symbol appear in non-decreasing event-time order within
+each file: of the 59,361,947 consecutive pairs of price rows of the same symbol
+in the same file, none steps backward (\texttt{OrderReport}). This is why the
+placeholder rows are the only late events at every tolerance we tested
+(Section~\ref{sec:discussion}).
 
 \section{System Design}\label{sec:design}
 Figure~\ref{fig:pipeline} shows the dataflow.
