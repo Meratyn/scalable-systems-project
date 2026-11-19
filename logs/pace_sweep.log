@@ -1,0 +1,17 @@
+2026-11-19 16:19:33 start
+16:19:33 begin s60
+16:35:12 end s60 rc=0 938.703164975s rows=368727 events_per_s=12608
+16:35:12 begin s300
+16:38:22 end s300 rc=0 190.663613682s rows=368727 events_per_s=62074
+16:38:22 begin s1500
+16:39:04 end s1500 rc=0 41.194865420s rows=368727 events_per_s=287302
+16:39:04 begin unpaced
+16:39:26 end unpaced rc=0 22.719922330s rows=368727 events_per_s=520926
+2026-11-19 16:39:26 runs done; analysis
+== s60 vs s300
+IDENTICAL
+== s60 vs s1500
+IDENTICAL
+== s60 vs unpaced
+IDENTICAL
+2026-11-19 16:40:42 done

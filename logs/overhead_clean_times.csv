@@ -1,0 +1,7 @@
+variant,jar,rep,seconds,events_per_s,result_rows,rc
+main,ema-main-206ffa1.jar,1,48.062063589,1235728,1857457,0
+probe_off,ema-latency-probe-pace.jar,1,52.710868801,1126744,1857457,0
+main,ema-main-206ffa1.jar,2,51.545755929,1152212,1857457,0
+probe_off,ema-latency-probe-pace.jar,2,52.945616561,1121748,1857457,0
+main,ema-main-206ffa1.jar,3,50.370132040,1179104,1857457,0
+probe_off,ema-latency-probe-pace.jar,3,52.333329004,1134872,1857457,0

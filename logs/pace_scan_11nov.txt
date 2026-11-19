@@ -1,0 +1,7 @@
+file=data/raw/debs2022-gc-trading-day-11-11-21.csv
+price_events=11835403
+first_event_ms=1636614001013
+last_event_ms=1636670103009
+raw_span_h=15.584
+virtual_h=15.584
+capped_jumps=0

@@ -1,0 +1,10 @@
+2026-11-19 16:43:12 start
+16:44:00 main rep=1 rc=0 48.062063589s rows=1857457
+16:44:53 probe_off rep=1 rc=0 52.710868801s rows=1857457
+16:45:44 main rep=2 rc=0 51.545755929s rows=1857457
+16:46:37 probe_off rep=2 rc=0 52.945616561s rows=1857457
+16:47:28 main rep=3 rc=0 50.370132040s rows=1857457
+16:48:20 probe_off rep=3 rc=0 52.333329004s rows=1857457
+== main_r1 vs probe_off_r1
+IDENTICAL
+2026-11-19 16:48:29 done

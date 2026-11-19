@@ -1,0 +1,11 @@
+speed=1500 tolerance_h=0.1 results=368727 price_events=11835403
+group,metric,count,median_ms,p95_ms,p99_ms,max_ms
+all,measured,368727,406.1,514.2,576.1,794.3
+all,excess,368727,146.7,211.2,271.6,367.3
+all,excess_trigger,368727,146.6,211.2,271.6,367.2
+last30min,measured,686,365.9,602.0,602.2,602.3
+last30min,excess,686,115.8,164.7,164.9,165.0
+last30min,excess_trigger,686,115.0,116.2,116.3,116.3
+others,measured,368041,406.3,513.7,575.0,794.3
+others,excess,368041,146.8,211.2,271.6,367.3
+others,excess_trigger,368041,146.8,211.2,271.6,367.2
