@@ -1,7 +1,7 @@
 # Experiments and details
 
 This file holds the measurements and longer explanations that do not fit the
-5-page report (`report/report.tex`). Every number here comes from a log in
+5-page report (submitted separately). Every number here comes from a log in
 `logs/`; the script or tool that produced it is named in each section.
 Sections follow the order of the report.
 
