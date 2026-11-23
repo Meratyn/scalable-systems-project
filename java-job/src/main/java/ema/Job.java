@@ -141,13 +141,12 @@ public class Job {
      * Runs once per (symbol, window) when the window closes.
      *  - Close = the price event with the LATEST trading timestamp in the window.
      *  - zeroInit=false (default, --ema-init first): both EMAs are seeded with the first
-     *    price of a symbol, so its first window has no advisory (allowed by the
-     *    instructor if the choice is explained; see the report, "EMA starting value").
+     *    price of a symbol, so its first window has no advisory (our choice; see the
+     *    report, "EMA starting value").
      *    zeroInit=true (--ema-init zero): as in the spec, both previous EMAs start at 0; the
      *    first window then applies the formula and the crossover rule like any other window.
      *  - Windows with no price event for a symbol emit nothing; the EMAs continue from their
-     *    last values (as discussed with the instructor, passing the state forward or dropping
-     *    it are both acceptable).
+     *    last values.
      *  - strict=false: spec equations literally (previous EMAs may be equal).
      *    strict=true: a crossover needs the previous EMAs to differ.
      */

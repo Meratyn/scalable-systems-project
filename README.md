@@ -85,21 +85,22 @@ epoch milliseconds (UTC).
    - BUY: EMA38 > EMA100 now, and EMA38 ≤ EMA100 in the previous window.
    - SELL: EMA38 < EMA100 now, and EMA38 ≥ EMA100 in the previous window.
    - Both EMAs are seeded with the symbol's first price, so the first window
-     never has an advisory. The spec starts at 0; our seed is allowed by the
-     instructor if the choice is explained (`--ema-init zero` gives the spec's start).
-   - This literal rule (equality in the previous window allowed) is confirmed by
-     the instructor and is the main result (24,836 advisories for the full week).
+     never has an advisory. The spec starts at 0; we seed with the first price so
+     that the EMAs need no ramp-up and not every symbol gets a BUY in its first
+     window (`--ema-init zero` gives the spec's start).
+   - This literal rule (equality in the previous window allowed) follows the
+     specification's equations literally and is the main result (24,836
+     advisories for the full week).
    - With `--strict-crossover`, the previous comparison must be strict (`<` / `>`);
      this is an extra analysis only.
      This removes "crossovers" that start from equal EMAs, for example in a
      symbol's second window, right after seeding.
 
-As discussed with the instructor, either passing the EMA state forward or
-dropping it is acceptable; we emit no result for a window without events and
-let the EMAs continue from their last values.
+For a window without events we emit no result and let the EMAs continue from
+their last values.
 
 **Window price and ties.** The window price is the event with the latest
-trading timestamp (confirmed by the instructor). On equal timestamps the later
+trading timestamp. On equal timestamps the later
 event in input order wins: files sorted by name (the day), then line. In file
 mode (`--source file`) each file has one reader and Flink's channels keep line
 order, so the later line of the file wins at every parallelism (JUnit test

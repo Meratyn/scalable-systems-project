@@ -49,8 +49,8 @@ comment, the column header and a column description), 91 in total.
 
 ### 1.2 Rows without a trading date (`--require-trading-date`)
 
-The instructor allows rows with an empty `Trading date` to be ignored. Our main
-run uses the system-date fallback; `--require-trading-date` drops these rows.
+Our main run uses the system-date fallback; `--require-trading-date` drops
+these rows.
 Source: `logs/date_variants.csv`, `logs/date_variants.log`.
 
 | | Fallback (main run) | Drop | Dropped |
@@ -141,7 +141,7 @@ placeholder rows. This is derived from the lags above, not run.
 ## 2. EMA starting value (`--ema-init`)
 
 The specification starts both EMAs at 0. We seed both with the symbol's first
-window price, which the instructor allows if the choice is explained.
+window price. We explain the choice and its effect below.
 `--ema-init zero` gives the specification's start (`EmaInitZeroTest` checks it
 against a hand-computed example). Both modes see the same 1,857,457 windows of
 4,970 symbols. Source: `logs/ema_init.csv`, `logs/ema_init.log`. Windows are
