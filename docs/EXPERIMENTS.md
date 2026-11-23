@@ -168,8 +168,9 @@ relative error below 2·10⁻¹⁵. EMA100 should need about 230 windows by the 
 formula ((99/101)^n ≤ 0.01); we did not measure this. We chose the first-price
 seed because it has no ramp-up, does not emit a BUY at every symbol's first
 window, and gives meaningful EMAs for the 1,523 symbols that a zero start never
-brings close to their price. Its cost is the 4,847 equal-start signals in
-window 1, which the strict rule removes.
+brings close to their price. Its cost is the 4,847 equal-start signals, which
+the strict rule removes: 3,738 are in window 1 and 1,109 come later, after flat
+stretches in which EMA38 and EMA100 stay exactly equal.
 
 ## 3. Why the speedup levels off
 
@@ -215,7 +216,7 @@ every file.
 
 | Exchange | Events | 1 worker | 8 workers | Speedup |
 |---|---:|---:|---:|---:|
-| NL | 6.0M | 72.2 s | 38.5 s | 1.88 |
+| NL | 6.0M | 72.2 s | 38.5 s | 1.87 |
 | ETR | 32.0M | 77.3 s | 38.6 s | 2.00 |
 | FR | 21.4M | 74.0 s | 43.3 s | 1.71 |
 | All | 59.4M | 85.8 s | 46.2 s | 1.86 |
