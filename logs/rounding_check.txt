@@ -1,0 +1,11 @@
+source: literal=output/w2_p8/results strict=output/w2_strict_p8/results
+rule: |diff| < 1e-12 * P, P recovered from EMA38 (a = 2/39)
+literal signals: 24836
+  equal-start (previous EMAs exactly equal): 4847 (19.52 %); in window 1: 3738, later: 1109
+  rounding artefacts (|EMA38-EMA100| < tol*P): 594 (2.39 %), of which equal-start: 594
+    later windows BUY: 13
+    later windows SELL: 25
+    window 1 BUY: 135
+    window 1 SELL: 421
+strict signals: 19989
+  previous EMAs differ only by rounding (0 < |diff| < tol*P): 260 (1.30 %)

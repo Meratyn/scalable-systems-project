@@ -1,0 +1,14 @@
+source: output/w2_p8/results
+movement = (max EMA38 - min EMA38) / mean EMA38; flat if < 0.005
+symbols: 4970, flat: 1004
+top 10 symbols by literal signal count (rank, symbol, signals, windows, movement, flat):
+   1 A1EXUJ.ETR        38   530 0.000041 FLAT
+   2 A0V8FZ.ETR        23   530 0.000028 FLAT
+   3 PHIA.NL           20   516 0.009581 
+   4 IECR1.FR          20   656 0.000475 FLAT
+   5 BESGP.NL          20   561 0.003858 FLAT
+   6 BESGN.NL          20   561 0.003643 FLAT
+   7 BESGG.NL          20   561 0.003605 FLAT
+   8 BESGD.NL          20   561 0.003827 FLAT
+   9 IDESE.FR          19   656 0.008212 
+  10 A0Z3LT.ETR        19   540 0.006705 
