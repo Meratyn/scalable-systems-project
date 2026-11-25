@@ -11,7 +11,6 @@ It is written in Java on Apache Flink 1.20.1 (`java-job/`).
 
 - Java 11 or newer, Maven 3
 - Python 3 (only for helper scripts: `compare_runs.py`, `bench_summary.py`, `make_small_set.py`, `check_stale.py`)
-- About 6 GB RAM for the full week
 
 ## Data
 
