@@ -7,6 +7,12 @@ For every symbol, the job computes EMA38 and EMA100 over 5-minute tumbling
 event-time windows and emits a BUY or SELL advisory when the two EMAs cross.
 It is written in Java on Apache Flink 1.20.1 (`java-job/`).
 
+**GitHub repository: https://github.com/Meratyn/scalable-systems-project**
+
+```sh
+git clone https://github.com/Meratyn/scalable-systems-project.git
+cd scalable-systems-project
+```
 ## Requirements
 
 - Java 11 or newer, Maven 3
@@ -15,9 +21,15 @@ It is written in Java on Apache Flink 1.20.1 (`java-job/`).
 ## Data
 
 Download the 7 daily CSV files from https://doi.org/10.5281/zenodo.6382482 and
-put them in `data/raw/`. The `data/` folder is gitignored.
+put them in `data/raw/` **inside the cloned repository folder**, next to
+`java-job/` and this README. The `data/` folder is gitignored, so create it
+after cloning:
 
-Smaller subsets used during development (also gitignored):
+```sh
+mkdir -p data/raw
+```
+All commands in this README must be run from the repository root (the folder
+containing this README); paths such as `data/raw` and `output/` are relative to it.
 
 | Folder | Contents |
 |---|---|
@@ -53,10 +65,11 @@ For ease of execution, this command can also be found as a script:
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--input <dir>` | `data/raw_test/` | folder with the CSV files |
+| `--input <dir>` | `data/raw/` | folder with the CSV files |
 | `--output <dir>` | `output` | results go to `<dir>/results/` |
 | `--parallelism <n>` | `1` | number of parallel workers |
 | `--strict-crossover` | off | require the previous EMAs to differ (see below) |
+| `--ema-init first\|zero` | `first` | EMA start value: the symbol's first price, or 0 as in the specification |
 | `--tolerance-hours <h>` | `200` | watermark out-of-orderness bound |
 | `--late-output` | off | write events that arrive after their window closed to `<dir>/late/` |
 | `--source file\|legacy` | `file` | `file` = FileSource (one reader per file); `legacy` = splittable `readTextFile` |
